@@ -9,6 +9,10 @@ SSH_AUDIT_REF=v3.3.0
 NUCLEI_VERSION=3.11.1
 NUCLEI_SHA256_amd64=ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6
 NUCLEI_SHA256_arm64=8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07
+# report.typ is written for this version: check it still renders before a bump.
+TYPST_VERSION=0.13.1
+TYPST_SHA256_x86_64=7d214bfeffc2e585dc422d1a09d2b144969421281e8c7f5d784b65fc69b5673f
+TYPST_SHA256_aarch64=4f5b7ee6e57fb639019ee0f6bffcf940edad228ede6ff5269a9f05a1544ceed4
 SCAN_USER=external-scan
 INSTALL_DIR=/var/lib/external-scan
 BASE=$(dirname "$(readlink -f "$0")")
@@ -24,10 +28,10 @@ install_packages() {
     if command -v apt-get >/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -q
-        apt-get install -y -q nmap openssh-client git python3 curl openssl bind9-dnsutils bsdextrautils procps ca-certificates
+        apt-get install -y -q nmap openssh-client git python3 curl openssl bind9-dnsutils bsdextrautils procps ca-certificates xz-utils iproute2
         apt-get install -y -q ndiff || say "ndiff is not available, ndiff.txt will not be written"
     elif command -v dnf >/dev/null; then
-        dnf install -y -q nmap openssh-clients git python3 curl openssl bind-utils util-linux procps-ng ca-certificates
+        dnf install -y -q nmap openssh-clients git python3 curl openssl bind-utils util-linux procps-ng ca-certificates xz iproute
         dnf install -y -q ndiff || say "ndiff is not available, ndiff.txt will not be written"
     else
         die "no apt-get or dnf found, install the packages by hand"
@@ -70,6 +74,31 @@ install_nuclei() {
     echo "$NUCLEI_VERSION" >"$dir/VERSION"
 }
 
+# Renders the PDF report. One static binary with its own fonts, so the PDF looks the same on every distribution.
+install_typst() {
+    local dir=$BASE/tools/typst arch sum
+    case $(uname -m) in
+        x86_64) arch=x86_64 sum=$TYPST_SHA256_x86_64 ;;
+        aarch64) arch=aarch64 sum=$TYPST_SHA256_aarch64 ;;
+        *) die "no typst build for $(uname -m)" ;;
+    esac
+    if [[ -x $dir/typst && $(cat "$dir/VERSION" 2>/dev/null) == "$TYPST_VERSION" ]]; then
+        say "typst $TYPST_VERSION already installed"
+        return
+    fi
+    say "fetching typst $TYPST_VERSION"
+    archive=$(mktemp)
+    trap 'rm -f "${zip:-}" "$archive"' EXIT
+    curl -fsSL -o "$archive" \
+        "https://github.com/typst/typst/releases/download/v$TYPST_VERSION/typst-$arch-unknown-linux-musl.tar.xz"
+    echo "$sum  $archive" | sha256sum -c --quiet - || die "typst download does not match its checksum"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    tar -xJf "$archive" -C "$dir" --strip-components 1 "typst-$arch-unknown-linux-musl/typst"
+    chmod 755 "$dir/typst"
+    echo "$TYPST_VERSION" >"$dir/VERSION"
+}
+
 say "installing packages"
 install_packages
 
@@ -89,6 +118,7 @@ mkdir -p "$BASE/tools"
 git_checkout https://github.com/testssl/testssl.sh.git "$BASE/tools/testssl.sh" "$TESTSSL_REF"
 git_checkout https://github.com/jtesta/ssh-audit.git "$BASE/tools/ssh-audit" "$SSH_AUDIT_REF"
 install_nuclei
+install_typst
 
 say "setting permissions"
 # Only results/ and cache/ are writable by the scan user, so a compromised tool cannot change the code or the targets.

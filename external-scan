@@ -12,6 +12,8 @@ PARSE=$BASE/parse.py
 TESTSSL=$BASE/tools/testssl.sh/testssl.sh
 SSH_AUDIT=$BASE/tools/ssh-audit/ssh-audit.py
 NUCLEI=$BASE/tools/nuclei/nuclei
+TYPST=$BASE/tools/typst/typst
+TEMPLATE=$BASE/report.typ
 # nuclei keeps its config and templates under $HOME, the scan user can only write here.
 NUCLEI_HOME=$BASE/cache/nuclei
 TODAY=$(date +%F)
@@ -24,11 +26,16 @@ UDP_PORTS=53,69,123,161,443,500,1194,1900,3478,4500,5060,51820
 SENSITIVE_PORTS=21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,6443,8006,8443,9090,9200,9443,10000,11211,27017
 KUMA_URL=
 WEB_SCAN=off
+PDF_REPORT=off
+OPERATOR=
 TARGET_IPS=()
 TARGET_LABELS=()
 declare -A TARGET_WEB_SCAN=()
+declare -A TARGET_AUTH=()
 NUCLEI_READY=0
 NUCLEI_NOTE=
+NUCLEI_TEMPLATES=
+VERSIONS=()
 CHECKS=()
 ACCEPTS=()
 LOG=
@@ -131,13 +138,21 @@ parse_config() {
                 ACCEPTS+=("$current"$'\t'"${f[1]}"$'\t'"${f[3]}"$'\t'"${reason%\"}")
                 continue
             fi
+            if [[ ${f[0]} == authorization ]]; then
+                (( ${#f[@]} >= 2 )) || die "line $n: authorization needs a text"
+                [[ -z ${TARGET_AUTH[$current]:-} ]] || die "line $n: second authorization line for $current"
+                reason="${f[*]:1}"
+                reason=${reason#\"}
+                TARGET_AUTH[$current]=${reason%\"}
+                continue
+            fi
             if [[ ${f[0]} == web_scan ]]; then
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: web_scan needs 'on' or 'off'"
                 [[ -z ${TARGET_WEB_SCAN[$current]:-} ]] || die "line $n: second web_scan line for $current"
                 TARGET_WEB_SCAN[$current]=${f[1]}
                 continue
             fi
-            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>', 'accept ...' or 'web_scan on|off'"
+            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>', 'accept ...', 'authorization ...' or 'web_scan on|off'"
             [[ ${f[0]} =~ ^(https|tls|smtp|imap|pop3)$ ]] || die "line $n: unknown mode '${f[0]}'"
             [[ ${f[1]} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "line $n: invalid name '${f[1]}'"
             valid_port "${f[2]}" || die "line $n: invalid port '${f[2]}'"
@@ -179,6 +194,16 @@ parse_config() {
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: web_scan needs 'on' or 'off'"
                 WEB_SCAN=${f[1]}
                 ;;
+            pdf_report)
+                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: pdf_report needs 'on' or 'off'"
+                PDF_REPORT=${f[1]}
+                ;;
+            operator)
+                (( ${#f[@]} >= 2 )) || die "line $n: operator needs a name"
+                OPERATOR="${f[*]:1}"
+                OPERATOR=${OPERATOR#\"}
+                OPERATOR=${OPERATOR%\"}
+                ;;
             *)
                 die "line $n: unknown keyword '${f[0]}'"
                 ;;
@@ -198,6 +223,19 @@ check_tools() {
     if any_web_scan; then
         [[ -x $NUCLEI ]] || die "nuclei not found at $NUCLEI, run install.sh"
     fi
+    if [[ $PDF_REPORT != off ]]; then
+        [[ -x $TYPST ]] || die "typst not found at $TYPST, run install.sh"
+        [[ -r $TEMPLATE ]] || die "cannot read $TEMPLATE"
+    fi
+}
+
+# Tool versions for the "how" part of the PDF report.
+tool_versions() {
+    VERSIONS+=("external-scan"$'\t'"$(git -c safe.directory="$BASE" -C "$BASE" describe --tags --always --dirty 2>/dev/null)")
+    VERSIONS+=("nmap"$'\t'"$(nmap --version 2>/dev/null | awk 'NR == 1 {print $3}')")
+    VERSIONS+=("testssl.sh"$'\t'"$(sed -n 's/^declare -r VERSION="\(.*\)"$/\1/p' "$TESTSSL" | head -1)")
+    VERSIONS+=("ssh-audit"$'\t'"$(sed -n "s/^VERSION = '\(.*\)'$/\1/p" "${SSH_AUDIT%/*}/src/ssh_audit/globals.py")")
+    VERSIONS+=("typst"$'\t'"$("$TYPST" --version 2>/dev/null | awk '{print $2}')")
 }
 
 web_scan_on() {
@@ -224,6 +262,8 @@ update_nuclei_templates() {
         && [[ -d $NUCLEI_HOME/nuclei-templates/http ]]; then
         NUCLEI_NOTE="The nuclei templates update failed, the web scan used the templates of a previous run. See scan.log."
     fi
+    NUCLEI_TEMPLATES=$(grep -o '"nuclei-templates-version":"[^"]*"' \
+        "$NUCLEI_HOME/.config/nuclei/.templates-config.json" 2>/dev/null | cut -d'"' -f4)
 }
 
 has_net_raw() {
@@ -471,6 +511,7 @@ classify_findings() {
         [[ $aip == "$ip" ]] || continue
         if [[ -n ${count[$pattern]:-} ]]; then
             accepted+=("$pattern (${count[$pattern]} finding(s)) until $until: $reason")
+            accepted_data+=("$pattern"$'\t'"${count[$pattern]}"$'\t'"$until"$'\t'"$reason")
         elif [[ -z ${used[$pattern]:-} ]] && (( ! failures )); then
             # Skipped when a tool failed, because the finding may only be missing for that reason.
             notes+=("accept $pattern matched nothing in this scan. If the risk is gone, the line can be removed.")
@@ -551,15 +592,76 @@ write_report() {
         section "Notes" \
             "Skipped checks, tool errors and accept lines that match nothing." "${notes[@]}"
     } >"$dir/REPORT.txt"
+    [[ $PDF_REPORT == off ]] || write_pdf
+}
+
+# Prints one "<kind>\t<value>" line per value, for parse.py report.
+emit() {
+    local kind=$1 value
+    shift
+    for value in "$@"; do
+        printf '%s\t%s\n' "$kind" "$value"
+    done
+}
+
+report_data() {
+    local c cip rest
+    emit ip "$ip"
+    emit label "$label"
+    emit date "$TODAY"
+    emit started "$started"
+    emit finished "$(date +%s)"
+    emit status "$status"
+    emit scan_type "$SCAN_TYPE"
+    emit nmap_args "${NMAP_ARGS[*]}"
+    emit udp_ports "$UDP_PORTS"
+    emit udp_done "$udp_done"
+    emit sensitive_ports "$SENSITIVE_PORTS"
+    emit cert_warn_days "$CERT_WARN_DAYS"
+    emit web_scan "${TARGET_WEB_SCAN[$ip]:-$WEB_SCAN}"
+    emit operator "$OPERATOR"
+    emit authorization "${TARGET_AUTH[$ip]:-}"
+    emit scanner "$(hostname -f 2>/dev/null || uname -n)"
+    emit source "$(ip -o route get "$ip" 2>/dev/null | grep -o 'src [^ ]*' | cut -d' ' -f2)"
+    emit previous "$prev_date"
+    emit new_ports "$new_count"
+    emit version "${VERSIONS[@]}"
+    if (( web_ran )); then
+        emit version "nuclei"$'\t'"$(cat "${NUCLEI%/*}/VERSION" 2>/dev/null), templates ${NUCLEI_TEMPLATES:-unknown}"
+    fi
+    emit change "${changes[@]}"
+    emit attention "${attention[@]}"
+    emit accepted "${accepted_data[@]}"
+    emit note "${notes[@]}"
+    for c in "${CHECKS[@]}"; do
+        read -r cip rest <<<"$c"
+        if [[ $cip == "$ip" ]]; then
+            emit check "$rest"
+        fi
+    done
+}
+
+# The PDF goes to the owner of the target. A failure shows in SUMMARY.txt but never changes the status.
+write_pdf() {
+    if ! report_data | python3 "$PARSE" report "$dir" >"$dir/report.json" 2>>"$LOG" \
+        || ! "$TYPST" compile --root / --ignore-system-fonts \
+            --input data="$dir/report.json" \
+            "$TEMPLATE" "$dir/REPORT.pdf" </dev/null >/dev/null 2>>"$LOG"; then
+        log "[$ip] PDF report failed"
+        rm -f "$dir/REPORT.pdf"
+        pdf_failed=1
+    fi
 }
 
 scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
-    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0
-    local c cip mode fqdn port p svc tunnel high max total
-    local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=()
+    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0
+    local started c cip mode fqdn port p svc tunnel high max total
+    local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=() accepted_data=()
+
+    started=$(date +%s)
 
     mkdir -p "$dir/testssl"
     log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
@@ -674,8 +776,9 @@ scan_target() {
 }
 
 record() {
-    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/REPORT.txt' \
-        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}")")
+    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/REPORT.txt%s' \
+        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}" \
+        "$( (( pdf_failed )) && echo "  PDF failed, see scan.log")")")
     case $status in
         ERROR) ANY_ERROR=1 ;;
         ATTENTION) ANY_ATTENTION=1 ;;
@@ -706,6 +809,7 @@ main() {
     (( EUID != 0 )) || die "refusing to run as root, run it as the external-scan user"
     parse_config
     check_tools
+    [[ $PDF_REPORT == off ]] || tool_versions
 
     mkdir -p "$OUTPUT" || die "cannot create $OUTPUT"
     exec 9>"$OUTPUT/.lock"

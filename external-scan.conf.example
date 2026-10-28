@@ -64,6 +64,18 @@ keep_months 12
 #   Default: off
 # web_scan on
 #
+# pdf_report on | off
+#   Also writes REPORT.pdf for each target, in English, to send to
+#   the owner of the address. It says who scanned, when, what and how, with
+#   the findings and the SHA-256 of every raw result. A PDF that fails is
+#   noted in SUMMARY.txt and scan.log, it never changes the status.
+#   Default: off
+# pdf_report on
+#
+# operator <text>
+#   Who runs the scan, printed in the PDF report. Optional.
+# operator "Jane Doe, Example IT"
+#
 # ---------------------------------------------------------------------------
 # TARGETS (one block per public IP address)
 # ---------------------------------------------------------------------------
@@ -108,6 +120,10 @@ keep_months 12
 #   Turns the nuclei web scan on or off for this target only, whatever the
 #   global web_scan says.
 #
+#   authorization <text>   (indented, optional)
+#   The written permission for this address, printed in the PDF report.
+#   Without it the PDF says it is not set in the configuration.
+#
 #   accept <key pattern> until <YYYY-MM-DD> <reason>   (indented, optional)
 #   Accepts a known risk on the IP of the block above, so it stops raising
 #   the status every month. The report still lists it under "Accepted risks"
@@ -136,6 +152,7 @@ keep_months 12
 # A firewall that forwards web and mail to a server behind it:
 #
 # target 203.0.113.10 firewall.example.com
+#   authorization "purchase order 2026-042, signed by J. Smith on 2026-09-15"
 #   web_scan on                   # the permission covers a vulnerability scan
 #   https www.example.com   443   # web site behind the reverse proxy
 #   https cloud.example.com 443   # second site on the same proxy
