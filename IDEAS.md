@@ -95,3 +95,17 @@ history. Useful as a cross check, but it mostly repeats the scan. Needs an API
 key.
 
 Risk: none. Cost: small.
+
+## 9. Structured findings
+
+findings.tsv holds a key and a sentence per finding. The PDF report of #5
+gets the tool, the severity, the place and the message back from that
+sentence with regexes. If someone rewords a sentence in add_finding, the
+regexes stop matching without any error: findings lose their severity and
+are no longer grouped.
+
+add_finding could write these as separate columns of findings.tsv, and the
+text and PDF reports would read the columns. classify_findings and
+compare_findings read findings.tsv too, so they would change with it.
+
+Risk: none. Cost: medium.
