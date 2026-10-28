@@ -1,0 +1,34 @@
+# external-scan configuration.
+# Only scan addresses you have written permission to scan.
+# Lines starting with # are comments.
+
+# Alert when a certificate expires in less than this many days.
+cert_warn_days 30
+
+# Delete results older than this many months.
+keep_months 12
+
+# Optional Uptime Kuma push monitor. Leave commented to disable.
+# kuma_url https://kuma.example.com/api/push/XXXXXXXXXX
+
+# One block per public IP address: "target <ip> <free label>".
+# Every open TCP port is scanned. Ports that nmap sees as SSL are tested
+# with testssl.sh and ports that run SSH are tested with ssh-audit.
+#
+# Indented lines test a name on that IP with testssl.sh: "<mode> <fqdn> <port>".
+# Use them for sites behind a reverse proxy, where the certificate depends
+# on the name. The test always connects to the target IP, even if DNS says
+# something else.
+# Modes: https, tls (TLS from the first byte), smtp, imap, pop3 (STARTTLS).
+#
+# target 203.0.113.10 firewall.example.com
+#   https www.example.com   443
+#   https cloud.example.com 443
+#   smtp  mail.example.com  25
+#   smtp  mail.example.com  587
+#   tls   mail.example.com  465
+#   imap  mail.example.com  143
+#   tls   mail.example.com  993
+#   tls   mail.example.com  995
+#
+# target 198.51.100.20 home

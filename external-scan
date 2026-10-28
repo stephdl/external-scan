@@ -1,0 +1,461 @@
+#!/usr/bin/env bash
+# Monthly external exposure scan.
+# Runs nmap, testssl.sh and ssh-audit against the targets of external-scan.conf
+# and writes a plain text report per target. See README.md.
+set -uo pipefail
+export LC_ALL=C PYTHONDONTWRITEBYTECODE=1
+
+BASE=$(dirname "$(readlink -f "$0")")
+CONFIG=$BASE/external-scan.conf
+OUTPUT=$BASE/results
+PARSE=$BASE/parse.py
+TESTSSL=$BASE/tools/testssl.sh/testssl.sh
+SSH_AUDIT=$BASE/tools/ssh-audit/ssh-audit.py
+TODAY=$(date +%F)
+
+CERT_WARN_DAYS=30
+KEEP_MONTHS=12
+KUMA_URL=
+TARGET_IPS=()
+TARGET_LABELS=()
+CHECKS=()
+LOG=
+RUN_DIR=
+NMAP_ARGS=()
+SCAN_TYPE=
+SUMMARY=()
+ANY_ERROR=0
+ANY_ATTENTION=0
+ANY_NEW_PORT=0
+
+usage() {
+    cat <<EOF
+Usage: external-scan [--config FILE] [--output DIR]
+
+  --config FILE  configuration file (default: $CONFIG)
+  --output DIR   results directory (default: $OUTPUT)
+EOF
+}
+
+log() {
+    local line
+    line="$(date '+%F %T') $*"
+    if [[ -n $LOG ]]; then echo "$line" >>"$LOG"; else echo "$line" >&2; fi
+}
+
+kuma_push() {
+    [[ -n $KUMA_URL ]] || return 0
+    # The push token is part of the URL, so curl reads it from stdin to keep it out of ps and logs.
+    curl -K - -fsS -m 20 -o /dev/null -G \
+        --data-urlencode "status=$1" --data-urlencode "msg=$2" --data-urlencode "ping=" \
+        <<<"url = \"$KUMA_URL\"" 2>/dev/null || log "Uptime Kuma push failed"
+}
+
+die() {
+    log "ERROR: $*"
+    [[ -z $LOG ]] || echo "external-scan: $*" >&2
+    kuma_push down "external-scan error: $*"
+    exit 1
+}
+
+valid_port() {
+    [[ $1 =~ ^[1-9][0-9]{0,4}$ ]] && (( $1 <= 65535 ))
+}
+
+is_target() {
+    local known
+    for known in "${TARGET_IPS[@]}"; do
+        [[ $known == "$1" ]] && return 0
+    done
+    return 1
+}
+
+parse_config() {
+    local line n=0 current="" ip label
+    local -a f
+    [[ -r $CONFIG ]] || die "cannot read $CONFIG"
+    while IFS= read -r line || [[ -n $line ]]; do
+        n=$((n + 1))
+        line=${line%%#*}
+        [[ $line =~ ^[[:space:]]*$ ]] && continue
+        read -r -a f <<<"$line"
+
+        if [[ $line =~ ^[[:space:]] ]]; then
+            [[ -n $current ]] || die "line $n: indented check outside a target block"
+            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>'"
+            [[ ${f[0]} =~ ^(https|tls|smtp|imap|pop3)$ ]] || die "line $n: unknown mode '${f[0]}'"
+            [[ ${f[1]} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "line $n: invalid name '${f[1]}'"
+            valid_port "${f[2]}" || die "line $n: invalid port '${f[2]}'"
+            CHECKS+=("$current ${f[0]} ${f[1]} ${f[2]}")
+            continue
+        fi
+
+        current=""
+        case ${f[0]} in
+            target)
+                (( ${#f[@]} >= 2 )) || die "line $n: expected 'target <ip> [label]'"
+                ip=$(python3 "$PARSE" check-ip "${f[1]}" 2>/dev/null) \
+                    || die "line $n: '${f[1]}' is not a single IP address (no range, no host name)"
+                is_target "$ip" && die "line $n: $ip is listed twice"
+                label="${f[*]:2}"
+                TARGET_IPS+=("$ip")
+                TARGET_LABELS+=("${label:-$ip}")
+                current=$ip
+                ;;
+            cert_warn_days)
+                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(0|[1-9][0-9]*)$ ]] || die "line $n: cert_warn_days needs a number"
+                CERT_WARN_DAYS=${f[1]}
+                ;;
+            keep_months)
+                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^[1-9][0-9]*$ ]] || die "line $n: keep_months needs a number of at least 1"
+                KEEP_MONTHS=${f[1]}
+                ;;
+            kuma_url)
+                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^https?:// ]] || die "line $n: kuma_url needs an http(s) URL"
+                # Kuma shows the URL with ?status=up&msg=OK&ping=, the script adds its own query.
+                KUMA_URL=${f[1]%%\?*}
+                ;;
+            *)
+                die "line $n: unknown keyword '${f[0]}'"
+                ;;
+        esac
+    done <"$CONFIG"
+    (( ${#TARGET_IPS[@]} > 0 )) || die "no target in $CONFIG, nothing to scan"
+}
+
+check_tools() {
+    local tool
+    for tool in nmap python3 timeout flock awk comm; do
+        command -v "$tool" >/dev/null || die "missing command: $tool"
+    done
+    [[ -z $KUMA_URL ]] || command -v curl >/dev/null || die "missing command: curl"
+    [[ -x $TESTSSL ]] || die "testssl.sh not found at $TESTSSL, run install.sh"
+    [[ -f $SSH_AUDIT ]] || die "ssh-audit not found at $SSH_AUDIT, run install.sh"
+}
+
+has_net_raw() {
+    local caps
+    caps=$(awk '/^CapEff:/ {print $2}' "/proc/$$/status")
+    (( (16#$caps >> 13) & 1 ))
+}
+
+host_port() {
+    if [[ $1 == *:* ]]; then echo "[$1]:$2"; else echo "$1:$2"; fi
+}
+
+# Prints one formatted line for a port, reading the parse.py ports output on stdin.
+port_line() {
+    awk -F'\t' -v p="$1" '$1 == p { printf "%-10s %-14s %s\n", $1, $2, ($4 == "-" ? "" : $4) }'
+}
+
+port_is_open() {
+    awk -F'\t' -v p="$1/tcp" '$1 == p { found = 1 } END { exit !found }' "$2"
+}
+
+find_previous() {
+    local ip=$1 i day xml
+    local -a days=("$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+    for (( i = ${#days[@]} - 1; i >= 0; i-- )); do
+        day=${days[i]}
+        [[ -d $day && ${day##*/} != "$TODAY" ]] || continue
+        for xml in "$day/${ip}"_*/nmap.xml; do
+            if [[ -f $xml ]] && python3 "$PARSE" ports "$xml" >/dev/null 2>&1; then
+                echo "$xml"
+                return
+            fi
+        done
+    done
+}
+
+# The functions below run inside scan_target and use its local variables.
+
+flag() {
+    [[ $status == ERROR ]] || status=ATTENTION
+}
+
+check_dns() {
+    local fqdn=$1 addrs
+    [[ $dns_done == *" $fqdn "* ]] && return
+    dns_done+="$fqdn "
+    if ! addrs=$(python3 "$PARSE" resolve "$fqdn" 2>>"$LOG"); then
+        notes+=("$fqdn does not resolve in DNS. It was tested on $ip anyway.")
+        flag
+    elif [[ " $addrs " != *" $ip "* ]]; then
+        notes+=("$fqdn resolves to $addrs, not to $ip. It was tested on $ip anyway.")
+        flag
+    fi
+}
+
+run_testssl() {
+    local mode=$1 fqdn=$2 port=$3 name shown target parsed rc kind a b c line
+    local -a args=(--quiet --color 0 --warnings batch --overwrite --connect-timeout 10 --openssl-timeout 10)
+    if [[ -n $fqdn ]]; then
+        name=${fqdn}_$port
+        shown=$fqdn:$port
+        target=$fqdn:$port
+        # Always connect to the authorized IP, whatever the DNS says for this name.
+        args+=(--ip "$ip")
+    else
+        name=ip_$port
+        shown=$(host_port "$ip" "$port")
+        target=$shown
+    fi
+    case $mode in
+        https) target=https://$target ;;
+        smtp | imap | pop3) args+=(-t "$mode") ;;
+    esac
+
+    log "[$ip] testssl $shown ($mode)"
+    timeout 30m "$TESTSSL" "${args[@]}" \
+        --jsonfile "$dir/testssl/$name.json" --logfile "$dir/testssl/$name.log" \
+        "$target" </dev/null >/dev/null 2>>"$LOG"
+    rc=$?
+    if ! parsed=$(python3 "$PARSE" testssl "$dir/testssl/$name.json" 2>>"$LOG"); then
+        notes+=("$shown: testssl gave no usable result (exit $rc). See testssl/$name.log.")
+        flag
+        return
+    fi
+    while IFS=$'\t' read -r kind a b c; do
+        case $kind in
+            CERT)
+                line=$(printf '%-45s expires %s, %s days left' "$shown" "$a" "$b")
+                if (( b < 0 )); then
+                    line+="  EXPIRED"
+                    flag
+                elif (( b < CERT_WARN_DAYS )); then
+                    line+="  RENEW SOON"
+                    flag
+                fi
+                certs+=("$line")
+                ;;
+            ISSUE)
+                tls+=("$shown  $a  $b: $c")
+                flag
+                ;;
+        esac
+    done <<<"$parsed"
+}
+
+run_ssh_audit() {
+    local port=$1 out=$dir/ssh-audit_$1 parsed kind a b c
+    log "[$ip] ssh-audit port $port"
+    timeout 5m python3 "$SSH_AUDIT" -n -p "$port" "$ip" </dev/null >"$out.txt" 2>>"$LOG"
+    timeout 5m python3 "$SSH_AUDIT" -j -p "$port" "$ip" </dev/null >"$out.json" 2>>"$LOG"
+    if ! parsed=$(python3 "$PARSE" ssh-audit "$out.json" 2>>"$LOG"); then
+        notes+=("Port $port: ssh-audit gave no usable result. See ssh-audit_$port.txt.")
+        flag
+        return
+    fi
+    while IFS=$'\t' read -r kind a b c; do
+        case $kind in
+            FAIL) ssh+=("port $port  $a $b: $c") ;;
+            CVE) ssh+=("port $port  $a (CVSS $b): $c") ;;
+            *) continue ;;
+        esac
+        flag
+    done <<<"$parsed"
+}
+
+section() {
+    local title=$1 intro=$2 item
+    shift 2
+    printf '\n== %s ==\n%s\n' "$title" "$intro"
+    if (( $# == 0 )); then
+        echo "  None."
+    else
+        for item in "$@"; do
+            echo "  $item"
+        done
+    fi
+}
+
+write_report() {
+    local -a open=()
+    [[ ! -s $dir/ports.tsv ]] || mapfile -t open < <(
+        awk -F'\t' '{ printf "%-10s %-14s %s\n", $1, $2, ($4 == "-" ? "" : $4) }' "$dir/ports.tsv")
+    {
+        echo "External scan report"
+        echo "Target : $ip ($label)"
+        echo "Date   : $TODAY"
+        echo "Scan   : $SCAN_TYPE"
+        echo "Status : $status"
+        echo
+        echo "OK means nothing needs a look. ATTENTION means read the sections below."
+        echo "ERROR means the scan did not complete and this report is partial."
+        section "Open ports" \
+            "TCP ports that answer from the Internet, with the service nmap recognised." "${open[@]}"
+        section "Changes${prev_date:+ since $prev_date}" \
+            "Ports that appeared (NEW) or disappeared (GONE) since the previous scan." "${changes[@]}"
+        section "Certificates" \
+            "Expiry date of each certificate seen. Alert below $CERT_WARN_DAYS days." "${certs[@]}"
+        section "TLS problems" \
+            "Findings that testssl rates HIGH or CRITICAL. FATAL means the test could not run. Details in testssl/." "${tls[@]}"
+        section "SSH problems" \
+            "Algorithms ssh-audit says to remove, and known CVEs. Details in ssh-audit_<port>.txt." "${ssh[@]}"
+        section "Known vulnerabilities by version (vulners)" \
+            "CVEs matched on the version string only. Distro packages often fix them without changing the version, so check before acting. Not counted in the status. Details in nmap.txt." "${vulns[@]}"
+        section "Notes" \
+            "Skipped checks, DNS mismatches and tool errors." "${notes[@]}"
+    } >"$dir/REPORT.txt"
+}
+
+scan_target() {
+    local ip=$1 label=$2
+    local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
+    local status=OK prev="" prev_date="" prev_tsv="" covered=" " dns_done=" " new_count=0
+    local c cip mode fqdn port p svc tunnel high max total
+    local -a changes=() certs=() tls=() ssh=() vulns=() notes=()
+
+    mkdir -p "$dir/testssl"
+    log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
+    timeout 6h nmap "${NMAP_ARGS[@]}" -oX "$dir/nmap.xml" -oN "$dir/nmap.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
+    if ! python3 "$PARSE" ports "$dir/nmap.xml" >"$dir/ports.tsv" 2>>"$LOG"; then
+        log "[$ip] nmap failed"
+        status=ERROR
+        notes+=("nmap did not finish, nothing else was tested. See scan.log.")
+        write_report
+        record
+        return
+    fi
+    log "[$ip] nmap done, $(wc -l <"$dir/ports.tsv") open port(s)"
+
+    prev=$(find_previous "$ip")
+    if [[ -z $prev ]]; then
+        changes+=("First scan of this target. This report is the baseline, there is nothing to compare.")
+    else
+        prev_date=$(basename "$(dirname "$(dirname "$prev")")")
+        prev_tsv=$(python3 "$PARSE" ports "$prev")
+        while IFS= read -r p; do
+            [[ -n $p ]] || continue
+            changes+=("NEW   $(port_line "$p" <"$dir/ports.tsv")")
+            new_count=$((new_count + 1))
+        done < <(comm -13 <(cut -f1 <<<"$prev_tsv" | sort) <(cut -f1 "$dir/ports.tsv" | sort))
+        while IFS= read -r p; do
+            [[ -n $p ]] || continue
+            changes+=("GONE  $(port_line "$p" <<<"$prev_tsv")")
+        done < <(comm -23 <(cut -f1 <<<"$prev_tsv" | sort) <(cut -f1 "$dir/ports.tsv" | sort))
+        (( ${#changes[@]} )) || changes+=("No change.")
+        if (( new_count )); then
+            flag
+            ANY_NEW_PORT=1
+        fi
+        if command -v ndiff >/dev/null; then
+            ndiff "$prev" "$dir/nmap.xml" >"$dir/ndiff.txt" 2>>"$LOG"
+        fi
+    fi
+
+    while IFS=$'\t' read -r p high max total; do
+        [[ -n $p ]] || continue
+        vulns+=("$(printf '%-10s %s known CVEs, %s rated 7.0 or more, highest %s' "$p" "$total" "$high" "$max")")
+    done < <(python3 "$PARSE" vulners "$dir/nmap.xml" 2>>"$LOG")
+
+    for c in "${CHECKS[@]}"; do
+        read -r cip mode fqdn port <<<"$c"
+        [[ $cip == "$ip" ]] || continue
+        if ! port_is_open "$port" "$dir/ports.tsv"; then
+            notes+=("$fqdn:$port ($mode) skipped, port $port is not open.")
+            continue
+        fi
+        check_dns "$fqdn"
+        run_testssl "$mode" "$fqdn" "$port"
+        covered+="$port "
+    done
+
+    while IFS=$'\t' read -r p svc tunnel _; do
+        port=${p%/*}
+        if [[ $svc == ssh ]]; then
+            run_ssh_audit "$port"
+        elif [[ $tunnel == ssl || $svc =~ ^(ssl|https|https-alt|imaps|pop3s|smtps)$ ]] \
+            && [[ $covered != *" $port "* ]]; then
+            run_testssl tls "" "$port"
+        fi
+    done <"$dir/ports.tsv"
+
+    write_report
+    record
+    log "[$ip] done, status $status"
+}
+
+record() {
+    SUMMARY+=("$(printf '%-9s %-45s %s new port(s)  %s/REPORT.txt' "$status" "$ip ($label)" "$new_count" "${dir##*/}")")
+    case $status in
+        ERROR) ANY_ERROR=1 ;;
+        ATTENTION) ANY_ATTENTION=1 ;;
+    esac
+}
+
+prune_old() {
+    local cutoff day
+    cutoff=$(date -d "-$KEEP_MONTHS months" +%F)
+    for day in "$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]; do
+        [[ -d $day && ${day##*/} < $cutoff ]] || continue
+        rm -rf -- "$day"
+        log "removed old results ${day##*/}"
+    done
+}
+
+main() {
+    local i global=OK
+    while (( $# )); do
+        case $1 in
+            --config) CONFIG=${2:?--config needs a file}; shift 2 ;;
+            --output) OUTPUT=${2:?--output needs a directory}; shift 2 ;;
+            -h | --help) usage; exit 0 ;;
+            *) usage >&2; exit 2 ;;
+        esac
+    done
+
+    (( EUID != 0 )) || die "refusing to run as root, run it as the external-scan user"
+    parse_config
+    check_tools
+
+    mkdir -p "$OUTPUT" || die "cannot create $OUTPUT"
+    exec 9>"$OUTPUT/.lock"
+    flock -n 9 || die "another scan is already running"
+
+    RUN_DIR=$OUTPUT/$TODAY
+    # A second run on the same day replaces the first one.
+    [[ ! -d $RUN_DIR ]] || rm -rf -- "$RUN_DIR"
+    mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
+    LOG=$RUN_DIR/scan.log
+
+    NMAP_ARGS=(-Pn -sV --script vulners -p- --open)
+    if has_net_raw; then
+        NMAP_ARGS+=(-sS --privileged)
+        SCAN_TYPE="SYN scan"
+    else
+        NMAP_ARGS+=(-sT)
+        SCAN_TYPE="TCP connect scan (no CAP_NET_RAW)"
+    fi
+
+    echo "external-scan: started, ${#TARGET_IPS[@]} target(s), results in $RUN_DIR"
+    log "started, ${#TARGET_IPS[@]} target(s), $SCAN_TYPE"
+    for i in "${!TARGET_IPS[@]}"; do
+        scan_target "${TARGET_IPS[i]}" "${TARGET_LABELS[i]}"
+    done
+
+    (( ANY_ATTENTION )) && global=ATTENTION
+    (( ANY_ERROR )) && global=ERROR
+    {
+        echo "External scan summary, $TODAY"
+        echo "Overall status: $global"
+        echo
+        printf '%s\n' "${SUMMARY[@]}"
+    } >"$RUN_DIR/SUMMARY.txt"
+
+    (( ANY_ERROR )) || prune_old
+
+    if (( ANY_ERROR )); then
+        kuma_push down "external-scan $TODAY: scan error, see SUMMARY.txt"
+    elif (( ANY_NEW_PORT )); then
+        kuma_push down "external-scan $TODAY: new open port, see SUMMARY.txt"
+    else
+        kuma_push up "external-scan $TODAY: $global"
+    fi
+
+    log "finished, status $global"
+    echo "external-scan: finished, status $global, see $RUN_DIR/SUMMARY.txt"
+    (( ! ANY_ERROR ))
+}
+
+main "$@"

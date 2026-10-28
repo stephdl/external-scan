@@ -1,0 +1,24 @@
+[Unit]
+Description=External exposure scan
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=external-scan
+Group=external-scan
+ExecStart=/var/lib/external-scan/external-scan
+# Raw sockets for the nmap SYN scan, given to this service only instead of setcap on nmap.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/external-scan/results
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+TimeoutStartSec=24h

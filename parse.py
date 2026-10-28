@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Read nmap, testssl.sh and ssh-audit output for external-scan.
+
+Each subcommand prints tab separated lines that the bash script reads.
+Empty fields are printed as "-" because bash "read" merges consecutive tabs.
+"""
+
+import ipaddress
+import json
+import socket
+import sys
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+
+
+def clean(text, limit=200):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def check_ip(value):
+    # ip_address() rejects ranges and host names, which nmap would happily expand.
+    print(ipaddress.ip_address(value).compressed)
+
+
+def resolve(name):
+    infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
+    print(" ".join(sorted({info[4][0] for info in infos})))
+
+
+def load_nmap(path):
+    root = ET.parse(path).getroot()
+    if root.find("runstats/finished") is None:
+        raise ValueError(f"{path}: nmap did not finish")
+    return root
+
+
+def open_ports(root):
+    for port in root.iter("port"):
+        state = port.find("state")
+        if state is not None and state.get("state") == "open":
+            yield port
+
+
+def ports(path):
+    for port in open_ports(load_nmap(path)):
+        name = tunnel = detail = ""
+        service = port.find("service")
+        if service is not None:
+            name = service.get("name", "")
+            tunnel = service.get("tunnel", "")
+            detail = " ".join(
+                service.get(key) for key in ("product", "version", "extrainfo") if service.get(key)
+            )
+        print(f"{port.get('portid')}/{port.get('protocol')}\t{name or '-'}\t{tunnel or '-'}\t{clean(detail) or '-'}")
+
+
+def vulners(path):
+    for port in open_ports(load_nmap(path)):
+        scores = []
+        for script in port.findall("script"):
+            if script.get("id") != "vulners":
+                continue
+            for elem in script.iter("elem"):
+                if elem.get("key") == "cvss":
+                    try:
+                        scores.append(float(elem.text))
+                    except (TypeError, ValueError):
+                        pass
+        if scores:
+            high = sum(1 for score in scores if score >= 7.0)
+            print(f"{port.get('portid')}/{port.get('protocol')}\t{high}\t{max(scores):.1f}\t{len(scores)}")
+
+
+def testssl(path):
+    with open(path) as handle:
+        findings = json.load(handle)
+    if not isinstance(findings, list):
+        raise ValueError(f"{path}: expected the flat JSON format (--jsonfile)")
+    now = datetime.now(timezone.utc)
+    for item in findings:
+        ident = item.get("id", "")
+        severity = item.get("severity", "")
+        finding = item.get("finding", "")
+        # With several certificates the id gets a suffix like "cert_notAfter <hostCert#1>".
+        if ident.startswith("cert_notAfter"):
+            try:
+                end = datetime.strptime(finding.strip(), "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            print(f"CERT\t{finding.strip()}\t{(end - now).days}")
+        elif severity in ("HIGH", "CRITICAL", "FATAL"):
+            print(f"ISSUE\t{severity}\t{ident}\t{clean(finding) or '-'}")
+
+
+def ssh_audit(path):
+    with open(path) as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict) or not any(key in data for key in ("banner", "kex")):
+        raise ValueError(f"{path}: unexpected ssh-audit JSON")
+    for kind in ("kex", "key", "enc", "mac"):
+        for alg in data.get(kind) or []:
+            notes = alg.get("notes") or {}
+            if not isinstance(notes, dict):
+                continue
+            for note in notes.get("fail") or []:
+                print(f"FAIL\t{kind}\t{alg.get('algorithm', '?')}\t{clean(note) or '-'}")
+    for cve in data.get("cves") or []:
+        print(f"CVE\t{cve.get('name', '?')}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
+
+
+COMMANDS = {
+    "check-ip": check_ip,
+    "resolve": resolve,
+    "ports": ports,
+    "vulners": vulners,
+    "testssl": testssl,
+    "ssh-audit": ssh_audit,
+}
+
+
+def main():
+    if len(sys.argv) != 3 or sys.argv[1] not in COMMANDS:
+        sys.exit(f"usage: parse.py {{{'|'.join(COMMANDS)}}} ARG")
+    try:
+        COMMANDS[sys.argv[1]](sys.argv[2])
+    except Exception as error:
+        sys.exit(f"parse.py {sys.argv[1]}: {error}")
+
+
+if __name__ == "__main__":
+    main()
