@@ -133,6 +133,7 @@ parse_config() {
             fi
             if [[ ${f[0]} == web_scan ]]; then
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: web_scan needs 'on' or 'off'"
+                [[ -z ${TARGET_WEB_SCAN[$current]:-} ]] || die "line $n: second web_scan line for $current"
                 TARGET_WEB_SCAN[$current]=${f[1]}
                 continue
             fi
@@ -218,7 +219,9 @@ update_nuclei_templates() {
     mkdir -p "$NUCLEI_HOME" 2>>"$LOG"
     log "nuclei templates update"
     # Without -duc on purpose: with it, nuclei skips the template download.
-    if ! HOME=$NUCLEI_HOME timeout 15m "$NUCLEI" -ut -nc </dev/null >/dev/null 2>>"$LOG"; then
+    # Without templates at all, run_nuclei reports failed/web instead.
+    if ! HOME=$NUCLEI_HOME timeout 15m "$NUCLEI" -ut -nc </dev/null >/dev/null 2>>"$LOG" \
+        && [[ -d $NUCLEI_HOME/nuclei-templates/http ]]; then
         NUCLEI_NOTE="The nuclei templates update failed, the web scan used the templates of a previous run. See scan.log."
     fi
 }
@@ -370,7 +373,7 @@ run_nuclei() {
     # Connect to the authorized IP and present the name in SNI and Host, like testssl --ip.
     # Redirects are not followed, so a redirect to another host is never scanned.
     # No interactsh: its callbacks go to third party servers.
-    HOME=$NUCLEI_HOME timeout 3h "$NUCLEI" -duc -nc -ni -dr -jsonl -or -ot \
+    HOME=$NUCLEI_HOME timeout 30m "$NUCLEI" -duc -nc -ni -dr -jsonl -or -ot \
         -pt http -s critical,high -etags dos,intrusive,fuzz \
         -rl 20 -c 10 -timeout 10 \
         -H "Host: $vhost" -sni "$fqdn" -u "https://$(host_port "$ip" "$port")" \
@@ -541,7 +544,7 @@ scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
-    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_off=0 web_ran=0
+    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0
     local c cip mode fqdn port p svc tunnel high max total
     local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=()
 
@@ -625,15 +628,10 @@ scan_target() {
         check_dns "$fqdn"
         run_testssl "$mode" "$fqdn" "$port"
         covered+="$port "
-        if [[ $mode == https ]]; then
-            if web_scan_on "$ip"; then
-                run_nuclei "$fqdn" "$port"
-            else
-                web_off=1
-            fi
+        if [[ $mode == https ]] && web_scan_on "$ip"; then
+            run_nuclei "$fqdn" "$port"
         fi
     done
-    (( ! web_off )) || notes+=("Web application scan (nuclei) is off for this target, see web_scan in the config.")
     (( ! web_ran )) || [[ -z $NUCLEI_NOTE ]] || notes+=("$NUCLEI_NOTE")
 
     while IFS=$'\t' read -r p svc tunnel _; do

@@ -5,6 +5,7 @@ set -euo pipefail
 
 TESTSSL_REF=v3.2.4
 SSH_AUDIT_REF=v3.3.0
+# external-scan greps nuclei's "found unresponsive" warning: check it still exists before a bump.
 NUCLEI_VERSION=3.11.1
 NUCLEI_SHA256_amd64=ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6
 NUCLEI_SHA256_arm64=8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07
@@ -44,7 +45,7 @@ git_checkout() {
 }
 
 install_nuclei() {
-    local dir=$BASE/tools/nuclei arch sum zip
+    local dir=$BASE/tools/nuclei arch sum
     case $(uname -m) in
         x86_64) arch=amd64 sum=$NUCLEI_SHA256_amd64 ;;
         aarch64) arch=arm64 sum=$NUCLEI_SHA256_arm64 ;;
@@ -55,15 +56,16 @@ install_nuclei() {
         return
     fi
     say "fetching nuclei $NUCLEI_VERSION"
+    # Global, not local: the EXIT trap runs after the function is gone, also when set -e stops the script.
     zip=$(mktemp)
+    trap 'rm -f "$zip"' EXIT
     curl -fsSL -o "$zip" \
         "https://github.com/projectdiscovery/nuclei/releases/download/v$NUCLEI_VERSION/nuclei_${NUCLEI_VERSION}_linux_$arch.zip"
-    echo "$sum  $zip" | sha256sum -c --quiet - || { rm -f "$zip"; die "nuclei download does not match its checksum"; }
+    echo "$sum  $zip" | sha256sum -c --quiet - || die "nuclei download does not match its checksum"
     rm -rf "$dir"
     mkdir -p "$dir"
     # python3 is already installed, so no need for unzip.
     python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("nuclei", sys.argv[2])' "$zip" "$dir"
-    rm -f "$zip"
     chmod 755 "$dir/nuclei"
     echo "$NUCLEI_VERSION" >"$dir/VERSION"
 }
