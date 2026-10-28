@@ -109,7 +109,10 @@ keep_months 12
 #   you only see its default certificate.
 #   <mode>   How testssl.sh talks to the port:
 #              https  HTTPS, TLS from the first byte (web sites)
-#              tls    TLS from the first byte, any protocol (465, 993, 995)
+#              smtps  SMTP with TLS from the first byte (465)
+#              imaps  IMAP with TLS from the first byte (993)
+#              pop3s  POP3 with TLS from the first byte (995)
+#              tls    TLS from the first byte, any other protocol
 #              smtp   plain SMTP, then STARTTLS (25, 587)
 #              imap   plain IMAP, then STARTTLS (143)
 #              pop3   plain POP3, then STARTTLS (110)
@@ -163,11 +166,11 @@ keep_months 12
 #   https cloud.example.com 443   # second site on the same proxy
 #   smtp  mail.example.com  25    # incoming mail, STARTTLS
 #   smtp  mail.example.com  587   # mail submission, STARTTLS
-#   tls   mail.example.com  465   # mail submission, TLS from the start
+#   smtps mail.example.com  465   # mail submission, TLS from the start
 #   imap  mail.example.com  143   # IMAP, STARTTLS
-#   tls   mail.example.com  993   # IMAPS
+#   imaps mail.example.com  993   # IMAP, TLS from the start
 #   pop3  mail.example.com  110   # POP3, STARTTLS
-#   tls   mail.example.com  995   # POP3S
+#   pop3s mail.example.com  995   # POP3, TLS from the start
 #   accept sensitive/9090 until 2027-06-30 "firewall GUI, CrowdSec bans brute force, VPN planned"
 #   accept tls/*/*/BREACH until 2027-06-30 "HTTP compression needed, no secret in responses"
 #

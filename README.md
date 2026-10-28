@@ -65,7 +65,7 @@ target 203.0.113.10 firewall.example.com
   web_scan on
   https cloud.example.com 443
   smtp  mail.example.com  587
-  tls   mail.example.com  993
+  imaps mail.example.com  993
 ```
 
 Every open port is scanned anyway. Without any indented line, testssl.sh
