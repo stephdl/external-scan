@@ -9,13 +9,18 @@ For each address it:
 2. compares the open ports with the previous scan,
 3. checks certificates and TLS settings with testssl.sh,
 4. checks SSH settings with ssh-audit,
-5. writes a short plain text report.
+5. scans each web site name with nuclei, when `web_scan` is on,
+6. writes a short plain text report.
 
 ## Before you scan
 
 **Get written permission from the owner of every address you scan.** Only
 list those addresses in the config. The script refuses ranges and host names,
 and never connects to an address that is not in the config.
+
+**The nuclei web scan is a vulnerability scan, not a port scan.** It stays off
+until `web_scan on` is set. Turn it on only for owners whose written
+permission covers a vulnerability scan.
 
 **Ask the owner to whitelist the IP of the scanning VPS** in CrowdSec, the
 firewall IDS (Suricata on OPNsense, for example), fail2ban or anything similar.
@@ -38,7 +43,7 @@ again. It does the following:
 
 - installs nmap, python3 and the other packages,
 - creates the `external-scan` system user,
-- fetches pinned versions of testssl.sh and ssh-audit into `tools/`,
+- fetches pinned versions of testssl.sh, ssh-audit and nuclei into `tools/`,
 - creates `external-scan.conf` from the example if it does not exist,
 - copies the systemd service and timer to `/etc/systemd/system`.
 
@@ -54,8 +59,10 @@ The example in the file explains each line. A short version:
 ```
 cert_warn_days 30
 keep_months    12
+web_scan       off
 
 target 203.0.113.10 firewall.example.com
+  web_scan on
   https cloud.example.com 443
   smtp  mail.example.com  587
   tls   mail.example.com  993
@@ -66,6 +73,34 @@ still tests each port that nmap sees as SSL, and each SMTP, IMAP or POP3 port
 through STARTTLS, on the bare IP. The indented lines add a name to the test.
 A reverse proxy picks the certificate from the name, so without them you only
 see its default certificate.
+
+### Web application scan
+
+Behind a reverse proxy nmap only sees the proxy, never the applications. When
+`web_scan` is on, nuclei scans every `https` line: outdated Nextcloud or
+Mattermost versions, exposed admin pages, files like `.git` or `.env`.
+
+`web_scan off` at the start of the config turns it off for every target, and
+`web_scan on` under a target turns it on for that one only. The opposite works
+too.
+
+The scan stays safe for the target:
+
+- only templates rated critical or high, without the dos, intrusive and fuzz
+  tags,
+- at most 20 requests per second,
+- it connects to the target IP only, with the name in SNI and in the Host
+  header, and never follows a redirect,
+- no out-of-band test (interactsh), so nothing goes to third party servers.
+
+It is still an attack from the point of view of the target. Each name gets
+about 5000 requests in 5 minutes, and many carry real exploit payloads: path
+traversal, SQL injection, XSS, a few PUT and DELETE on known APIs. Expect the
+web server logs, a WAF or an IDS to report them. Without the whitelist the
+scanning VPS gets banned halfway.
+
+The templates are downloaded from GitHub again at the start of each scan, so
+a new finding can come from a new template, not from a change on the site.
 
 The config file never goes to git.
 
@@ -142,6 +177,7 @@ results/2026-11-01/
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output
+    nuclei/                       full nuclei output per name and port
     findings.tsv                  every finding with its key, compared next month
 ```
 
@@ -154,8 +190,8 @@ Each report has a status:
 
 A finding is a problem the scan found: a serious TLS or SSH weakness, a
 certificate that expires soon, SSH that accepts passwords, a sensitive port
-open to the Internet (see `sensitive_ports`), or a name that resolves to
-another address. Each finding has a stable key, like `tls/www.example.com/443/BREACH`.
+open to the Internet (see `sensitive_ports`), a nuclei match, or a name that
+resolves to another address. Each finding has a stable key, like `tls/www.example.com/443/BREACH`.
 
 The report starts with what matters:
 
@@ -212,6 +248,9 @@ sudo -u external-scan /var/lib/external-scan/external-scan \
 
 - Many VPS providers block outgoing port 25. The SMTP test on port 25 then
   fails, while 465 and 587 still work.
+- nuclei stops scanning a site that stops answering. The report then shows a
+  `failed/web/...` line. It is usually a ban: check the whitelist of the
+  scanning VPS.
 - The nmap vulners script sends the software versions it finds to
   vulners.com. Its matches use the version string only, so backported distro
   fixes show up as false positives. They do not change the status.

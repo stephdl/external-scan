@@ -52,6 +52,18 @@ keep_months 12
 #   The URL contains a secret token: it is never written to the logs.
 # kuma_url https://kuma.example.com/api/push/XXXXXXXXXX
 #
+# web_scan on | off
+#   Runs nuclei, a web vulnerability scanner, on every "https" line of every
+#   target. It finds outdated applications behind a reverse proxy, exposed
+#   admin pages and files like .git or .env. Only "critical" and "high"
+#   templates run, without the dos, intrusive and fuzz ones, at 20 requests
+#   per second at most. The templates are downloaded again at each scan.
+#   This is a vulnerability scan, not a port scan: turn it on only when the
+#   written permission covers it. A target can override it with its own
+#   "web_scan" line.
+#   Default: off
+# web_scan on
+#
 # ---------------------------------------------------------------------------
 # TARGETS (one block per public IP address)
 # ---------------------------------------------------------------------------
@@ -90,6 +102,11 @@ keep_months 12
 #   <port>   Required. A TCP port. If nmap does not see it open, the line is
 #            skipped and the report says so.
 #   A port tested by name is not tested a second time without a name.
+#   An "https" line is also scanned with nuclei when web_scan is on.
+#
+#   web_scan on | off      (indented, optional)
+#   Turns the nuclei web scan on or off for this target only, whatever the
+#   global web_scan says.
 #
 #   accept <key pattern> until <YYYY-MM-DD> <reason>   (indented, optional)
 #   Accepts a known risk on the IP of the block above, so it stops raising
@@ -107,6 +124,7 @@ keep_months 12
 #                    sshpw/<port>                           SSH accepts passwords
 #                    sensitive/<port>                       sensitive port open
 #                    dns/<name>                             name not on this IP
+#                    web/<name>/<port>/<template id>        nuclei finding
 #   <YYYY-MM-DD>   Required. Review the risk again at that date, at most a
 #                  year ahead is a good habit.
 #   <reason>       Free text: why the risk is accepted, or what mitigates it.
@@ -118,6 +136,7 @@ keep_months 12
 # A firewall that forwards web and mail to a server behind it:
 #
 # target 203.0.113.10 firewall.example.com
+#   web_scan on                   # the permission covers a vulnerability scan
 #   https www.example.com   443   # web site behind the reverse proxy
 #   https cloud.example.com 443   # second site on the same proxy
 #   smtp  mail.example.com  25    # incoming mail, STARTTLS
