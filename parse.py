@@ -214,8 +214,10 @@ def tls_endpoints(path, ip, failed):
                           ("TLS1_1", "TLS 1.1"), ("TLS1_2", "TLS 1.2"), ("TLS1_3", "TLS 1.3"))
                           if found.get(key, "").startswith("offered")],
             "grade": found.get("overall_grade", ""),
+            "grade_severity": first.get("overall_grade", {}).get("severity", ""),
             "subject": found.get("cert_commonName", ""),
             "trust": found.get("cert_chain_of_trust", ""),
+            "trust_severity": first.get("cert_chain_of_trust", {}).get("severity", ""),
             "expires": found.get("cert_notAfter", ""),
             "days": "" if days is None else days,
         })

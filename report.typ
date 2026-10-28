@@ -25,7 +25,7 @@
   authorization: "Authorization",
   generated: "Report generated",
   summary: "Summary",
-  summary-intro: "This scan looks at the address from the Internet, like an attacker would, without any login. Each problem found is a finding. A finding is either to fix, or accepted by the owner with a reason and a review date.",
+  summary-intro: "This scan looks at the address from the Internet, without any login. Each problem found is a finding. A finding is either to fix, or accepted by the owner with a reason and a review date.",
   category: "Category",
   to-fix: "To fix",
   accepted: "Accepted",
@@ -83,7 +83,7 @@
   service: "Service",
   sensitive: "sensitive",
   tls: "Encrypted services (TLS)",
-  tls-intro: "One line per name and port tested. The grade comes from testssl.sh, from A+ (best) to F. T means the certificate is not trusted.",
+  tls-intro: "One line per name and port tested. The grade, the trust message and their colors come from testssl.sh.",
   name: "Name",
   grade: "Grade",
   protocols: "Protocols",
@@ -103,7 +103,7 @@
   match: "Match",
   no-match: "no match",
   vulners: "Known vulnerabilities by version",
-  vulners-intro: "CVEs matched on the version number the service announces. Linux distributions often fix them without changing that number, so each one needs a check before acting. They do not change the status.",
+  vulners-intro: "CVEs matched on the version number the service announces. Linux distributions often fix them without changing that number. They do not change the status.",
   total: "CVEs",
   high: "Score 7.0 or more",
   highest: "Highest score",
@@ -129,7 +129,9 @@
 #let rule-color = rgb("#d5dbe2")
 #let header-fill = rgb("#edf1f5")
 #let status-colors = (OK: rgb("#2f855a"), ATTENTION: rgb("#c05621"), ERROR: rgb("#c53030"))
-#let severity-colors = (CRITICAL: rgb("#c53030"), HIGH: rgb("#c05621"), MEDIUM: rgb("#b7791f"))
+// Colors only show the severity the tool itself gave.
+#let severity-colors = (CRITICAL: rgb("#c53030"), HIGH: rgb("#c05621"), MEDIUM: rgb("#b7791f"), LOW: rgb("#4a6fa5"), OK: rgb("#2f855a"))
+#let tool-color(severity) = severity-colors.at(severity, default: ink)
 
 #let or-default(value, fallback) = if value == none or value == "" { fallback } else { value }
 #let mono(value) = text(font: "DejaVu Sans Mono", size: 7.5pt, value.replace("/", "/\u{200B}"))
@@ -243,12 +245,11 @@
 = #t("summary")
 #t("summary-intro")
 
-#let categories = ("sensitive", "web", "tls", "cert", "ssh", "sshpw", "dns", "failed")
+#let categories = data.findings.map(f => f.category).dedup()
 #data-table(
   (1fr, auto, auto),
   (t("category"), t("to-fix"), t("accepted")),
   categories
-    .filter(c => data.findings.any(f => f.category == c))
     .map(c => (
       t("cat-" + c),
       {
@@ -314,14 +315,12 @@
 
 = #t("open-findings")
 #intro(t("open-findings-intro"))
-#let severity-rank = (CRITICAL: 0, HIGH: 1, MEDIUM: 2)
 #data-table(
   (30%, 1fr),
   (t("check"), t("detail")),
   data
     .groups
     .filter(g => g.state == "open")
-    .sorted(key: g => (categories.position(c => c == g.category), severity-rank.at(g.severity, default: 3)))
     .map(g => (
       [#mono(g.check) \ #text(size: 7.5pt, fill: muted, t("cat-" + g.category))],
       [
@@ -360,14 +359,9 @@
   (t("name"), t("grade"), t("protocols"), t("certificate"), t("expires")),
   data.tls.map(e => (
     [#e.name:#e.port #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
-    if e.grade == "" { "" } else {
-      let color = if e.grade.starts-with("A") { status-colors.OK } else if e.grade.starts-with("B") {
-        severity-colors.MEDIUM
-      } else { status-colors.ERROR }
-      text(weight: "bold", fill: color, e.grade)
-    },
+    text(weight: "bold", fill: tool-color(e.grade_severity), e.grade),
     e.protocols.join(", "),
-    [#e.subject #if e.trust != "" and not e.trust.starts-with("passed") [\ #text(size: 7.5pt, fill: status-colors.ERROR, e.trust)]],
+    [#e.subject #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
     if e.expires == "" { "" } else {
       [#e.expires.slice(0, 10) \ #text(size: 7.5pt, fill: if type(e.days) == int and e.days < int(data.cert_warn_days) {
         status-colors.ERROR
