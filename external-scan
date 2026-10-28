@@ -172,7 +172,7 @@ parse_config() {
 
 check_tools() {
     local tool
-    for tool in nmap python3 timeout flock awk comm; do
+    for tool in nmap ssh python3 timeout flock awk comm; do
         command -v "$tool" >/dev/null || die "missing command: $tool"
     done
     [[ -z $KUMA_URL ]] || command -v curl >/dev/null || die "missing command: curl"
@@ -312,17 +312,29 @@ run_ssh_audit() {
     done <<<"$parsed"
 }
 
-# The main nmap scan runs ssh-auth-methods, which lists the login methods without trying one.
+# Asks the server for its login methods with the "none" method, which tries no password or key.
+# The OpenSSH client is used because the nmap of Rocky and RHEL is built without libssh2,
+# so its ssh-auth-methods script never runs there.
 check_ssh_auth() {
-    local ports=$1 auth port methods
-    auth=$(python3 "$PARSE" ssh-auth "$dir/nmap.xml" 2>>"$LOG")
+    local ports=$1 port out rc methods
     for port in ${ports//,/ }; do
-        methods=$(awk -F'\t' -v p="$port" '$1 == p { print $2 }' <<<"$auth")
-        if [[ -z $methods ]]; then
-            add_finding "failed/sshpw/$port" "nmap could not list the SSH login methods on port $port."
+        log "[$ip] ssh login methods on port $port"
+        out=$(timeout 30 ssh -F /dev/null -o BatchMode=yes -o PreferredAuthentications=none \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 -o LogLevel=ERROR -p "$port" "nobody@$ip" true </dev/null 2>&1)
+        rc=$?
+        # Exit 0 means "true" ran on the server: it opened a session without any login.
+        if (( rc == 0 )); then
+            tested+=" sshpw/$port "
+            add_finding "sshpw/$port" "SSH on port $port opened a session without any login. Require a key."
+            continue
+        fi
+        if [[ ! $out =~ Permission\ denied\ \(([^\)]*)\) ]]; then
+            add_finding "failed/sshpw/$port" "Could not list the SSH login methods on port $port: ${out:-no answer}"
             failures=1
             continue
         fi
+        methods=${BASH_REMATCH[1]//,/ }
         tested+=" sshpw/$port "
         if [[ " $methods " == *" password "* || " $methods " == *" keyboard-interactive "* ]]; then
             add_finding "sshpw/$port" "SSH on port $port accepts password login ($methods). Prefer keys only."
@@ -616,8 +628,7 @@ main() {
     mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
     LOG=$RUN_DIR/scan.log
 
-    # shellcheck disable=SC2054 # nmap takes a comma separated script list.
-    NMAP_ARGS=(-Pn -sV --script vulners,ssh-auth-methods -p- --open)
+    NMAP_ARGS=(-Pn -sV --script vulners -p- --open)
     if has_net_raw; then
         HAS_NET_RAW=1
         NMAP_ARGS+=(-sS --privileged)

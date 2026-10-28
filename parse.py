@@ -126,15 +126,6 @@ def ssh_audit(path):
         print(f"CVE\t{key_part(cve.get('name', '?'))}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
 
 
-def ssh_auth(path):
-    for port in open_ports(load_nmap(path)):
-        for script in port.findall("script"):
-            if script.get("id") != "ssh-auth-methods":
-                continue
-            methods = sorted({elem.text.strip() for elem in script.iter("elem") if elem.text and elem.text.strip()})
-            if methods:
-                print(f"{port.get('portid')}\t{' '.join(methods)}")
-
 
 COMMANDS = {
     "check-ip": check_ip,
@@ -143,7 +134,6 @@ COMMANDS = {
     "vulners": vulners,
     "testssl": testssl,
     "ssh-audit": ssh_audit,
-    "ssh-auth": ssh_auth,
 }
 
 
