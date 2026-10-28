@@ -142,15 +142,48 @@ results/2026-11-01/
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output
+    findings.tsv                  every finding with its key, compared next month
 ```
 
 Each report has a status:
 
 - **OK**: nothing needs a look.
-- **ATTENTION**: read the report. It can be a new open port, a certificate
-  that expires soon, a serious TLS or SSH finding, or a name that resolves to
-  another address.
+- **ATTENTION**: read "What changed" and "Needs attention". It can be a new
+  open port, or a finding that is not accepted in the config.
 - **ERROR**: the scan did not complete.
+
+A finding is a problem the scan found: a serious TLS or SSH weakness, a
+certificate that expires soon, SSH that accepts passwords, a sensitive port
+open to the Internet (see `sensitive_ports`), or a name that resolves to
+another address. Each finding has a stable key, like `tls/www.example.com/443/BREACH`.
+
+The report starts with what matters:
+
+- **What changed**: ports that appeared or disappeared, and findings that are
+  new or fixed since the previous scan.
+- **Needs attention**: findings that are not accepted.
+- **Accepted risks**: one line per `accept` line of the config, with the
+  number of findings it covers and the reason.
+- **Suggested accept lines**: ready to copy into the config.
+
+Then come the open ports, the certificates, the CVEs by version and the notes.
+
+### Accept known risks
+
+The first scan usually lists many findings, often the same one on several
+ports. Look at each one. Fix what can be fixed. For a risk you keep on
+purpose, copy its suggested line under the target in the config, set a review
+date and write the real reason:
+
+```
+target 203.0.113.10 firewall.example.com
+  accept sensitive/9090 until 2027-06-30 "firewall GUI, CrowdSec bans brute force, VPN planned"
+  accept tls/*/*/cert_revocation until 2027-06-30 "no OCSP on the internal CA"
+```
+
+From then on the status only turns to ATTENTION for something new or not yet
+accepted. An accepted finding comes back after its date. An accept line that
+matches nothing is reported, so the config stays clean.
 
 The first scan of an address is the baseline. It does not report new ports.
 
@@ -159,8 +192,8 @@ Results older than `keep_months` are deleted after each successful scan.
 ## Uptime Kuma (optional)
 
 Set `kuma_url` in the config to the URL of a Push monitor. After each scan
-the script sends `up` when there is no error and no new open port, and
-`down` otherwise. The URL contains a token, so it is never written to the
+the script sends `up` when the status is OK, and `down` otherwise: an error,
+a new open port or a finding that is not accepted. The URL contains a token, so it is never written to the
 logs.
 
 ## Test on the VPS itself
