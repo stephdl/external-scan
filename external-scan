@@ -637,15 +637,18 @@ report_data() {
 }
 
 # The PDF goes to the owner of the target. A failure shows in SUMMARY.txt but never changes the status.
+# report.json is kept when only typst fails, so the PDF can be rendered again by hand.
 write_pdf() {
-    if ! report_data | python3 "$PARSE" report "$dir" >"$dir/report.json" 2>>"$LOG" \
-        || ! "$TYPST" compile --root / --ignore-system-fonts \
-            --input data="$dir/report.json" \
-            "$TEMPLATE" "$dir/REPORT.pdf" </dev/null >/dev/null 2>>"$LOG"; then
-        log "[$ip] PDF report failed"
-        rm -f "$dir/REPORT.pdf" "$dir/report.json"
-        pdf_failed=1
+    if ! report_data | python3 "$PARSE" report "$dir" >"$dir/report.json" 2>>"$LOG"; then
+        rm -f "$dir/report.json"
+    elif "$TYPST" compile --root / --ignore-system-fonts \
+        --input data="$dir/report.json" \
+        "$TEMPLATE" "$dir/REPORT.pdf" </dev/null >/dev/null 2>>"$LOG"; then
+        return
     fi
+    log "[$ip] PDF report failed"
+    rm -f "$dir/REPORT.pdf"
+    pdf_failed=1
 }
 
 scan_target() {

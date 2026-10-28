@@ -240,7 +240,8 @@ and under which permission. Without them the PDF says they are not set.
 The PDF is rendered by [typst](https://typst.app), a single binary that
 `install.sh` fetches into `tools/`, with its own fonts. The template is
 `report.typ`. A PDF that fails is noted in `SUMMARY.txt` and `scan.log`, it
-never changes the status. To render it again by hand:
+never changes the status. When only typst fails, `report.json` stays, so the
+PDF can be rendered again by hand:
 
 ```
 tools/typst/typst compile --root / --ignore-system-fonts \
