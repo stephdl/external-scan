@@ -16,9 +16,9 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 
-def clean(text, limit=200):
-    text = " ".join(str(text).split())
-    return text if len(text) <= limit else text[: limit - 3] + "..."
+def clean(text):
+    # One line only, for the TSV files. Nothing is cut: the reports show the tool output in full.
+    return " ".join(str(text).split())
 
 
 def key_part(text):
@@ -204,7 +204,7 @@ def tls_endpoints(path, ip, failed):
         for item in items:
             # With several certificates the id gets a suffix like "cert_notAfter <hostCert#1>", the first one is kept.
             first.setdefault(str(item.get("id", "")).split(" ")[0], item)
-        found = {key: clean(item.get("finding", ""), 120) for key, item in first.items()}
+        found = {key: clean(item.get("finding", "")) for key, item in first.items()}
         days = cert_days(found.get("cert_notAfter", ""))
         endpoints.append({
             "name": host,
@@ -239,7 +239,7 @@ def ssh_servers(path):
         servers.append({
             "port": match.group(1),
             "completed": True,
-            "software": clean(data["banner"]["raw"], 80),
+            "software": clean(data["banner"]["raw"]),
             "fail": len({(kind, alg) for kind, alg, level, _ in notes if level == "fail"}),
             "warn": len({(kind, alg) for kind, alg, level, _ in notes if level == "warn"}),
             "cves": len(data.get("cves") or []),
@@ -260,8 +260,8 @@ def web_sites(path, failed):
                 info = item.get("info") or {}
                 matches.append({
                     "severity": str(info.get("severity", "")).upper(),
-                    "name": clean(info.get("name", ""), 120),
-                    "url": clean(item.get("matched-at", ""), 120),
+                    "name": clean(info.get("name", "")),
+                    "url": clean(item.get("matched-at", "")),
                 })
         except (OSError, ValueError):
             pass
