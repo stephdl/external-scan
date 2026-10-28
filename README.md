@@ -231,17 +231,20 @@ Results older than `keep_months` are deleted after each successful scan.
 ### PDF report for the owner
 
 Set `pdf_report on` in the config to also get a `REPORT.pdf` in English per
-address, to send to its owner. It says who ran the scan, from which machine,
-when it started and ended, what was tested and with which tool versions. Then
-it gives what changed, the findings to fix, the accepted risks, the open
-ports, the TLS, SSH and web details, the CVEs by version on TCP ports like
-`REPORT.txt`, and the notes. The TLS section also lists every known attack
-testssl tested with its result, its LOW and MEDIUM results except the ones per
-cipher suite, the tests it could not run, and each certificate. The SSH
-section gives the algorithms, the host key fingerprint and the notes of
-ssh-audit. The open ports say how nmap identified each service, and the scope
-says how many ports were not open. An annex gives the SHA-256 of every file of
-the target folder, except `report.json` and `REPORT.pdf`.
+address, to send to its owner. The report says who ran the scan, from which
+machine, when it started and ended, and what was tested. Then it gives what
+changed, the findings to fix, the accepted risks, the open ports with how nmap
+identified each service, the TLS services with the tests testssl could not
+run, SSH, the web sites, and the notes.
+
+A technical annex gives the rest of the data: the nmap command and the tool
+versions, every known attack testssl tested with its result, its LOW and
+MEDIUM results except the ones per cipher suite, each certificate, the SSH
+algorithms with the host key fingerprint and the notes of ssh-audit, what
+nuclei ran, the CVEs by version on TCP ports like `REPORT.txt`, and the
+SHA-256 of every file of the target folder, except `report.json` and
+`REPORT.pdf`. A section with nothing in it says "None.", so an empty result
+never looks like a check that did not run.
 
 The PDF adds no advice and no judgment of its own, and cuts no text. Messages
 come from the tools, and from the script for its own checks (DNS, sensitive ports, SSH

@@ -117,7 +117,9 @@
   method-probed: "probed",
   method-table: "guessed from the port number",
   confidence: "confidence",
-  filter-note: "testssl results are shown here when testssl rates them HIGH or CRITICAL. Its LOW and MEDIUM results are listed in the TLS section, and its results per cipher suite only in the raw files.",
+  filter-note: "testssl results are shown here when testssl rates them HIGH or CRITICAL. Its LOW and MEDIUM results are in the technical annex, and its results per cipher suite only in the raw files.",
+  annex-part: "Technical annex",
+  annex-part-intro: "The rest of the data of this scan, as the tools gave it. The report above leaves nothing out: every section it does not show is here.",
   attacks: "Known TLS attacks tested",
   attacks-intro: "Each attack testssl tested, with its result. One line per result, with the places where it was seen.",
   everywhere: "all tested services",
@@ -144,7 +146,7 @@
   highest: "Highest score",
   notes: "Notes",
   notes-intro: "Checks that were skipped or could not finish.",
-  annex: "Annex: raw results",
+  annex: "Raw results",
   annex-intro: "Every raw result of this scan is kept on the scanning machine. Their SHA-256 fingerprints prove that they were not changed after the report.",
   file: "File",
   cat-tls: "TLS settings",
@@ -170,6 +172,7 @@
 
 #let or-default(value, fallback) = if value == none or value == "" { fallback } else { value }
 #let mono(value) = text(font: "DejaVu Sans Mono", size: 7.5pt, value.replace("/", "/\u{200B}"))
+#let place-list(g) = if g.everywhere { t("everywhere") } else { g.where.join(", ") }
 #let empty-line = text(fill: muted, style: "italic", t("empty"))
 #let intro(body) = par(text(fill: muted, size: 9.5pt, body))
 #let pill(label, color) = box(
@@ -329,22 +332,6 @@
   (t("reverse-dns"), if data.nmap.hostnames.len() == 0 { t("empty") } else { data.nmap.hostnames.join(linebreak()) }),
 ))
 #if data.udp_ports != "" { intro(t("udp-hidden")) }
-== #t("how")
-#key-values((
-  (t("scan-type"), [#data.scan_type \ #mono("nmap " + data.nmap_args)]),
-  (t("tools"), data.versions.map(v => [#v.tool #or-default(v.version, t("unknown"))]).join(linebreak())),
-))
-#v(0.4em)
-*#t("steps")*
-#if data.nmap_done != "1" { enum(t("step-nmap")) } else {
-  enum(
-    t("step-nmap"),
-    t("step-tls"),
-    t("step-ssh"),
-    ..if data.web_ran == "1" { (t("step-web"),) },
-    t("step-compare"),
-  )
-}
 #block(fill: header-fill, inset: 9pt, radius: 2pt, width: 100%, text(size: 9pt, t("limits")))
 
 = #t("changes") #if data.previous != "" [#t("changes-since") #data.previous]
@@ -414,29 +401,6 @@
   )),
 )
 
-#let place-list(g) = if g.everywhere { t("everywhere") } else { g.where.join(", ") }
-== #t("attacks")
-#intro(t("attacks-intro"))
-#data-table(
-  (auto, 1fr, 1fr),
-  (t("check-id"), t("result"), t("where")),
-  data.tls_details.attacks.map(g => (
-    mono(g.id),
-    [#if g.severity in severity-colors { pill(g.severity, severity-colors.at(g.severity)) } else { g.severity } #g.finding],
-    text(size: 7.5pt, fill: muted, place-list(g)),
-  )),
-)
-== #t("lower")
-#intro(t("lower-intro"))
-#data-table(
-  (auto, 1fr, 1fr),
-  (t("check-id"), t("result"), t("where")),
-  data.tls_details.lower.map(g => (
-    mono(g.id),
-    [#pill(g.severity, severity-colors.at(g.severity, default: ink)) #g.finding],
-    text(size: 7.5pt, fill: muted, place-list(g)),
-  )),
-)
 #if data.tls_details.skipped.len() > 0 [
   == #t("skipped")
   #intro(t("skipped-intro"))
@@ -446,20 +410,6 @@
     data.tls_details.skipped.map(g => (mono(g.id), [#g.severity #g.finding], text(size: 7.5pt, fill: muted, place-list(g)))),
   )
 ]
-== #t("certs")
-#intro(t("certs-intro"))
-#data-table(
-  (1fr, 1fr, 1fr, 1fr),
-  (t("name"), t("issuer"), t("key"), t("fingerprint")),
-  data.tls_details.certs.map(c => (
-    [#c.at("cert_commonName", default: "") \ #text(size: 7.5pt, fill: muted, c.where.join(", "))],
-    [#c.at("cert_caIssuers", default: "") \ #text(size: 7.5pt, fill: muted)[#t("valid-from") #c.at("cert_notBefore", default: "")]],
-    [#c.at("cert_keySize", default: "") \ #text(size: 7.5pt, fill: muted, c.at("cert_signatureAlgorithm", default: ""))],
-    // Breaks every 16 hex digits so the fingerprint fits the column.
-    mono(c.at("cert_fingerprintSHA256", default: "").clusters().chunks(16).map(x => x.join()).join("\u{200B}")),
-  )),
-)
-
 = #t("ssh")
 #intro(t("ssh-intro"))
 #data-table(
@@ -477,15 +427,6 @@
     )
   }),
 )
-#for s in data.ssh.filter(s => s.completed) [
-  == #t("ssh-details") (#s.port)
-  #key-values((
-    (t("host-key"), s.fingerprints.map(f => mono(f)).join(linebreak())),
-    ..("kex", "key", "enc", "mac").map(k => (k, text(size: 8pt, s.algorithms.at(k).join(", ")))),
-    ..if s.notes.len() > 0 { ((t("ssh-notes"), text(size: 8pt, s.notes.join(linebreak()))),) },
-  ))
-]
-
 #if data.web_ran == "1" or data.web.len() > 0 [
   = #t("web")
   #intro(t("web-intro"))
@@ -507,10 +448,87 @@
       rows
     }).flatten().chunks(3),
   )
-  #if data.web_runs.len() > 0 [
-    == #t("web-runs")
+]
+
+= #t("notes")
+#intro(t("notes-intro"))
+#if data.notes.len() == 0 { empty-line } else {
+  set text(size: 9pt)
+  list(..data.notes.map(n => n))
+}
+
+#pagebreak()
+#heading(numbering: none, t("annex-part"))
+#intro(t("annex-part-intro"))
+#counter(heading).update(0)
+#set heading(numbering: "A.1.")
+
+= #t("how")
+#key-values((
+  (t("scan-type"), [#data.scan_type \ #mono("nmap " + data.nmap_args)]),
+  (t("tools"), data.versions.map(v => [#v.tool #or-default(v.version, t("unknown"))]).join(linebreak())),
+))
+#v(0.4em)
+*#t("steps")*
+#if data.nmap_done != "1" { enum(t("step-nmap")) } else {
+  enum(
+    t("step-nmap"),
+    t("step-tls"),
+    t("step-ssh"),
+    ..if data.web_ran == "1" { (t("step-web"),) },
+    t("step-compare"),
+  )
+}
+
+= #t("attacks")
+#intro(t("attacks-intro"))
+#data-table(
+  (auto, 1fr, 1fr),
+  (t("check-id"), t("result"), t("where")),
+  data.tls_details.attacks.map(g => (
+    mono(g.id),
+    [#if g.severity in severity-colors { pill(g.severity, severity-colors.at(g.severity)) } else { g.severity } #g.finding],
+    text(size: 7.5pt, fill: muted, place-list(g)),
+  )),
+)
+= #t("lower")
+#intro(t("lower-intro"))
+#data-table(
+  (auto, 1fr, 1fr),
+  (t("check-id"), t("result"), t("where")),
+  data.tls_details.lower.map(g => (
+    mono(g.id),
+    [#pill(g.severity, severity-colors.at(g.severity, default: ink)) #g.finding],
+    text(size: 7.5pt, fill: muted, place-list(g)),
+  )),
+)
+
+= #t("certs")
+#intro(t("certs-intro"))
+#data-table(
+  (1fr, 1fr, 1fr, 1fr),
+  (t("name"), t("issuer"), t("key"), t("fingerprint")),
+  data.tls_details.certs.map(c => (
+    [#c.at("cert_commonName", default: "") \ #text(size: 7.5pt, fill: muted, c.where.join(", "))],
+    [#c.at("cert_caIssuers", default: "") \ #text(size: 7.5pt, fill: muted)[#t("valid-from") #c.at("cert_notBefore", default: "")]],
+    [#c.at("cert_keySize", default: "") \ #text(size: 7.5pt, fill: muted, c.at("cert_signatureAlgorithm", default: ""))],
+    // Breaks every 16 hex digits so the fingerprint fits the column.
+    mono(c.at("cert_fingerprintSHA256", default: "").clusters().chunks(16).map(x => x.join()).join("\u{200B}")),
+  )),
+)
+
+#for s in data.ssh.filter(s => s.completed) [
+  = #t("ssh-details") (#s.port)
+  #key-values((
+    (t("host-key"), s.fingerprints.map(f => mono(f)).join(linebreak())),
+    ..("kex", "key", "enc", "mac").map(k => (k, text(size: 8pt, s.algorithms.at(k).join(", ")))),
+    ..if s.notes.len() > 0 { ((t("ssh-notes"), text(size: 8pt, s.notes.join(linebreak()))),) },
+  ))
+]
+
+#if data.web_runs.len() > 0 [
+    = #t("web-runs")
     #key-values(data.web_runs.map(r => (r.site, text(size: 8pt, r.lines.join(linebreak())))))
-  ]
 ]
 
 = #t("vulners")
@@ -521,15 +539,7 @@
   data.vulners.map(v => (mono(v.port), mono(v.id), v.cvss, v.exploit)),
 )
 
-= #t("notes")
-#intro(t("notes-intro"))
-#if data.notes.len() == 0 { empty-line } else {
-  set text(size: 9pt)
-  list(..data.notes.map(n => n))
-}
-
-#pagebreak()
-#heading(numbering: none, t("annex"))
+= #t("annex")
 #intro(t("annex-intro"))
 #{
   set text(size: 7.5pt)
