@@ -68,6 +68,10 @@ target 203.0.113.10 firewall.example.com
   imaps mail.example.com  993
 ```
 
+The modes are `https`, `smtps`, `imaps` and `pop3s` for TLS from the first
+byte, `smtp`, `imap` and `pop3` for STARTTLS, and `tls` for TLS from the first
+byte on any other protocol. `tls` also still works on the mail ports.
+
 Every open port is scanned anyway. Without any indented line, testssl.sh
 still tests each port that nmap sees as SSL, and each SMTP, IMAP or POP3 port
 through STARTTLS, on the bare IP. The indented lines add a name to the test.

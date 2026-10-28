@@ -153,7 +153,7 @@ parse_config() {
                 continue
             fi
             (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>', 'accept ...', 'authorization ...' or 'web_scan on|off'"
-            [[ ${f[0]} =~ ^(https|tls|smtps|imaps|pop3s|smtp|imap|pop3)$ ]] || die "line $n: unknown mode '${f[0]}'"
+            [[ ${f[0]} =~ ^(https|tls|(smtp|imap|pop3)s?)$ ]] || die "line $n: unknown mode '${f[0]}'"
             [[ ${f[1]} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "line $n: invalid name '${f[1]}'"
             valid_port "${f[2]}" || die "line $n: invalid port '${f[2]}'"
             CHECKS+=("$current ${f[0]} ${f[1]} ${f[2]}")
@@ -339,9 +339,10 @@ run_testssl() {
     fi
     case $mode in
         https) target=https://$target ;;
+        smtp | imap | pop3) args+=(-t "$mode") ;;
         # TLS from the first byte: the name only says which service it is.
         tls | smtps | imaps | pop3s) ;;
-        smtp | imap | pop3) args+=(-t "$mode") ;;
+        *) die "run_testssl: unknown mode '$mode'" ;;
     esac
 
     log "[$ip] testssl $shown ($mode)"
@@ -762,7 +763,9 @@ scan_target() {
             ssh_ports+=${ssh_ports:+,}$port
         elif [[ $covered == *" $port "* ]]; then
             continue
-        elif [[ $tunnel == ssl || $svc =~ ^(ssl|https|https-alt|imaps|pop3s|smtps)$ ]]; then
+        elif [[ $svc =~ ^(imaps|pop3s|smtps)$ ]]; then
+            run_testssl "$svc" "" "$port"
+        elif [[ $tunnel == ssl || $svc =~ ^(ssl|https|https-alt)$ ]]; then
             run_testssl tls "" "$port"
         elif [[ $svc =~ ^(smtp|imap|pop3)$ ]]; then
             run_testssl "$svc" "" "$port"
