@@ -85,6 +85,35 @@ def vulners(path):
         print(f"{port}\t{high}\t{top:.1f}\t{total}")
 
 
+def vulners_cves(path):
+    """One entry per vulners result, as nmap wrote it, highest score first."""
+    rows = []
+    for port in open_ports(load_nmap(path)):
+        for script in port.findall("script"):
+            if script.get("id") != "vulners":
+                continue
+            for table in script.iter("table"):
+                elems = {elem.get("key"): elem.text or "" for elem in table.findall("elem")}
+                if "id" not in elems:
+                    continue
+                try:
+                    score = float(elems.get("cvss", ""))
+                except ValueError:
+                    score = -1.0
+                rows.append({
+                    "port": f"{port.get('portid')}/{port.get('protocol')}",
+                    "id": elems["id"],
+                    "type": elems.get("type", ""),
+                    "cvss": elems.get("cvss", ""),
+                    "exploit": elems.get("is_exploit", ""),
+                    "_score": score,
+                })
+    rows.sort(key=lambda row: (row["port"], -row["_score"], row["id"]))
+    for row in rows:
+        del row["_score"]
+    return rows
+
+
 def load_testssl(path):
     with open(path, encoding="utf-8") as handle:
         findings = json.load(handle)
@@ -216,6 +245,8 @@ def tls_endpoints(path, ip, failed):
             "grade": found.get("overall_grade", ""),
             "grade_severity": first.get("overall_grade", {}).get("severity", ""),
             "subject": found.get("cert_commonName", ""),
+            # Every name the certificate is valid for, the common name alone can look wrong.
+            "san": clean(first.get("cert_subjectAltName", {}).get("finding", "")),
             "trust": found.get("cert_chain_of_trust", ""),
             "trust_severity": first.get("cert_chain_of_trust", {}).get("severity", ""),
             "expires": found.get("cert_notAfter", ""),
@@ -243,8 +274,116 @@ def ssh_servers(path):
             "fail": len({(kind, alg) for kind, alg, level, _ in notes if level == "fail"}),
             "warn": len({(kind, alg) for kind, alg, level, _ in notes if level == "warn"}),
             "cves": len(data.get("cves") or []),
+            "algorithms": {kind: [alg.get("algorithm", "") for alg in data.get(kind) or []]
+                           for kind in ("kex", "key", "enc", "mac")},
+            "fingerprints": [f"{fp.get('hostkey', '')} {fp.get('hash_alg', '')}:{fp.get('hash', '')}"
+                             for fp in data.get("fingerprints") or [] if fp.get("hash_alg") == "SHA256"],
+            "notes": [clean(note) for note in data.get("additional_notes") or []],
         })
     return servers
+
+
+# testssl checks for known TLS attacks, in the order testssl runs them.
+TLS_ATTACKS = ("heartbleed", "CCS", "ticketbleed", "opossum", "ROBOT", "secure_renego", "secure_client_renego",
+               "CRIME_TLS", "BREACH", "POODLE_SSL", "fallback_SCSV", "SWEET32", "FREAK", "DROWN", "LOGJAM",
+               "LOGJAM-common_primes", "BEAST", "BEAST_CBC_TLS1", "LUCKY13", "winshock", "RC4")
+CERT_FIELDS = ("cert_commonName", "cert_caIssuers", "cert_keySize", "cert_signatureAlgorithm", "cert_notBefore",
+               "cert_notAfter", "cert_fingerprintSHA256")
+
+
+def nmap_details(path):
+    """What the PDF tables leave out of nmap.xml: how each service was identified, reverse DNS, closed ports."""
+    details = {"services": {}, "hostnames": [], "not_open": []}
+    for name in ("nmap.xml", "nmap-udp.xml"):
+        try:
+            root = load_nmap(os.path.join(path, name))
+        except (OSError, ValueError, ET.ParseError):
+            continue
+        for hostname in root.iter("hostname"):
+            entry = f"{hostname.get('name')} ({hostname.get('type')})"
+            if entry not in details["hostnames"]:
+                details["hostnames"].append(entry)
+        for extra in root.iter("extraports"):
+            for reason in extra.findall("extrareasons") or [extra]:
+                details["not_open"].append({"proto": reason.get("proto", ""), "state": extra.get("state", ""),
+                                            "count": reason.get("count", extra.get("count", "")),
+                                            "reason": reason.get("reason", "")})
+        for port in open_ports(root):
+            service = port.find("service")
+            if service is None:
+                continue
+            details["services"][f"{port.get('portid')}/{port.get('protocol')}"] = {
+                "method": service.get("method", ""), "conf": service.get("conf", ""),
+                "cpe": [cpe.text for cpe in service.findall("cpe") if cpe.text]}
+    return details
+
+
+def group_rows(rows, total):
+    """Merges testssl rows with the same id, severity and finding, and lists where each was seen."""
+    groups = {}
+    for where, item in rows:
+        key = (item["id"], item["severity"], item["finding"])
+        groups.setdefault(key, []).append(where)
+    return [{"id": i, "severity": s, "finding": f, "where": w, "everywhere": len(w) == total}
+            for (i, s, f), w in groups.items()]
+
+
+def tls_details(path, ip):
+    """testssl results the main TLS table leaves out: attacks tested, lower severities, certificates, skipped tests."""
+    attacks, lower, skipped, certs = [], [], [], {}
+    folder = os.path.join(path, "testssl")
+    endpoints = 0
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        if not name.endswith(".json"):
+            continue
+        host, _, port = name[:-5].rpartition("_")
+        where = f"{ip if host == 'ip' else host}:{port}"
+        try:
+            items = load_testssl(os.path.join(folder, name))
+        except (OSError, ValueError):
+            continue
+        endpoints += 1
+        cert = {}
+        for item in items:
+            row = {"id": str(item.get("id", "")), "severity": str(item.get("severity", "")),
+                   "finding": clean(item.get("finding", ""))}
+            base = row["id"].split(" ")[0]
+            if base in TLS_ATTACKS:
+                attacks.append((where, row))
+            elif row["severity"] == "WARN":
+                skipped.append((where, row))
+            elif row["severity"] in ("LOW", "MEDIUM") and not base.startswith(("cipher-", "cipher_order-")):
+                lower.append((where, row))
+            if base in CERT_FIELDS:
+                cert.setdefault(base, row["finding"])
+        if cert.get("cert_fingerprintSHA256"):
+            entry = certs.setdefault(cert["cert_fingerprintSHA256"], {**cert, "where": []})
+            entry["where"].append(where)
+    order = {name: index for index, name in enumerate(TLS_ATTACKS)}
+    attack_groups = group_rows(attacks, endpoints)
+    attack_groups.sort(key=lambda g: (order.get(g["id"].split(" ")[0], 99), g["severity"] == "OK"))
+    return {"endpoints": endpoints, "attacks": attack_groups, "lower": group_rows(lower, endpoints),
+            "skipped": group_rows(skipped, endpoints), "certs": list(certs.values())}
+
+
+def nuclei_runs(path):
+    """The nuclei log lines that say how much was tested, as nuclei wrote them."""
+    runs = []
+    folder = os.path.join(path, "nuclei")
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        if not name.endswith(".log"):
+            continue
+        host, _, port = name[:-4].rpartition("_")
+        lines = []
+        try:
+            with open(os.path.join(folder, name), errors="replace") as handle:
+                for line in handle:
+                    if re.search(r"Templates loaded for current scan|Scan completed in|unresponsive", line):
+                        lines.append(clean(re.sub(r"\x1b\[[0-9;]*m", "", line)))
+        except OSError:
+            pass
+        runs.append({"site": f"{host}:{port}", "lines": lines})
+    return runs
 
 
 def web_sites(path, failed):
@@ -288,8 +427,23 @@ def checksums(path):
     return files
 
 
-def group_findings(findings):
+def port_services(ports, methods=None):
+    """Maps "25" to "smtp, Postfix smtpd" for TCP ports, as nmap recognised them."""
+    methods = methods or {}
+    services = {}
+    for row in ports:
+        if row["port"].endswith("/tcp"):
+            label = row["service"] if row["detail"] in ("", "-") else f"{row['service']}, {row['detail']}"
+            # nmap only named it after the port number, it did not recognise it.
+            if methods.get(row["port"], {}).get("method") == "table":
+                label += ", guessed from the port number"
+            services[row["port"].split("/")[0]] = label
+    return services
+
+
+def group_findings(findings, services=None):
     """Merges findings with the same check and the exact same tool message, and lists where each was seen."""
+    services = services or {}
     groups = {}
     for finding in findings:
         check, where, message = finding["key"], "", finding["text"]
@@ -311,6 +465,9 @@ def group_findings(findings):
         group["count"] += 1
         if where and where not in group["where"]:
             group["where"].append(where)
+    for group in groups.values():
+        # Same order as "where", so the PDF can print the service next to each place.
+        group["services"] = [services.get(place.rpartition(":")[2], "") for place in group["where"]]
     return list(groups.values())
 
 
@@ -360,17 +517,24 @@ def report(path):
             "severity": severity.group(1).upper() if severity else "",
             "state": "open" if key in attention else "accepted",
         })
-    data["groups"] = group_findings(data["findings"])
+    data["nmap"] = nmap_details(path)
+    services = port_services(data["ports"], data["nmap"]["services"])
+    data["groups"] = group_findings(data["findings"], services)
     # TCP only, like REPORT.txt.
     try:
-        data["vulners"] = [{"port": port, "high": high, "max": f"{top:.1f}", "total": total}
-                           for port, high, top, total in vulners_rows(os.path.join(path, "nmap.xml"))]
+        data["vulners"] = vulners_cves(os.path.join(path, "nmap.xml"))
     except (OSError, ValueError, ET.ParseError):
         data["vulners"] = []
     failed = {f["key"] for f in data["findings"] if f["category"] == "failed"}
     data["tls"] = tls_endpoints(path, data.get("ip", ""), failed)
+    for endpoint in data["tls"]:
+        endpoint["service"] = services.get(endpoint["port"], "")
     data["ssh"] = ssh_servers(path)
     data["web"] = web_sites(path, failed)
+    data["web_runs"] = nuclei_runs(path)
+    data["tls_details"] = tls_details(path, data.get("ip", ""))
+    for port in data["ports"]:
+        port.update(data["nmap"]["services"].get(port["port"], {"method": "", "conf": "", "cpe": []}))
     # A check that failed before writing its output file still gets a "not completed" row.
     for key in sorted(failed):
         parts = key.split("/")

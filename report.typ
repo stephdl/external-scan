@@ -103,7 +103,42 @@
   match: "Match",
   no-match: "no match",
   vulners: "Known vulnerabilities by version",
-  vulners-intro: "CVEs matched on the version number the service announces. Linux distributions often fix them without changing that number. They do not change the status.",
+  vulners-intro: "CVEs that the nmap vulners script lists for the version the service announces, as it gives them. The installed package was not checked. They do not change the status.",
+  cve: "CVE",
+  cvss: "CVSS",
+  exploit: "Public exploit",
+  san: "Also valid for:",
+  not-open: "Ports not open",
+  not-open-value: "ports, state",
+  why-not-open: "reason",
+  udp-hidden: "UDP ports that did not answer are not listed: nmap cannot tell closed from open|filtered for them.",
+  reverse-dns: "Reverse DNS",
+  identified: "Identified",
+  method-probed: "probed",
+  method-table: "guessed from the port number",
+  confidence: "confidence",
+  filter-note: "testssl results are shown here when testssl rates them HIGH or CRITICAL. Its LOW and MEDIUM results are listed in the TLS section, and its results per cipher suite only in the raw files.",
+  attacks: "Known TLS attacks tested",
+  attacks-intro: "Each attack testssl tested, with its result. One line per result, with the places where it was seen.",
+  everywhere: "all tested services",
+  lower: "Lower severity results",
+  lower-intro: "testssl results rated LOW or MEDIUM, except the results per cipher suite.",
+  skipped: "Tests that could not run",
+  skipped-intro: "testssl warnings: these tests did not run, so their result is unknown.",
+  certs: "Certificates",
+  certs-intro: "One line per certificate, as testssl read it, with the places where it was presented.",
+  issuer: "Issuer",
+  key: "Key",
+  signature: "Signature",
+  valid-from: "Valid from",
+  fingerprint: "SHA-256 fingerprint",
+  result: "Result",
+  check-id: "Test",
+  where: "Where",
+  ssh-details: "Algorithms and host key",
+  host-key: "Host key",
+  ssh-notes: "Notes from ssh-audit",
+  web-runs: "What nuclei ran",
   total: "CVEs",
   high: "Score 7.0 or more",
   highest: "Highest score",
@@ -288,7 +323,12 @@
     data.checks.map(c => [#c.name:#c.port (#c.mode)]).join(linebreak())
   }),
   (t("web-scan"), if data.web_ran == "1" { t("on") } else { t("off") }),
+  (t("not-open"), if data.nmap.not_open.len() == 0 { t("empty") } else {
+    data.nmap.not_open.map(n => [#n.count #n.proto #t("not-open-value") #n.state, #t("why-not-open") #n.reason]).join(linebreak())
+  }),
+  (t("reverse-dns"), if data.nmap.hostnames.len() == 0 { t("empty") } else { data.nmap.hostnames.join(linebreak()) }),
 ))
+#if data.udp_ports != "" { intro(t("udp-hidden")) }
 == #t("how")
 #key-values((
   (t("scan-type"), [#data.scan_type \ #mono("nmap " + data.nmap_args)]),
@@ -315,6 +355,7 @@
 
 = #t("open-findings")
 #intro(t("open-findings-intro"))
+#intro(t("filter-note"))
 #data-table(
   (30%, 1fr),
   (t("check"), t("detail")),
@@ -326,7 +367,7 @@
       [
         #if g.severity in severity-colors { pill(g.severity, severity-colors.at(g.severity)) } #g.message
         #if g.where.len() > 0 [
-          \ #text(size: 8pt, fill: muted)[#t("seen-on") #g.where.join(", ")]
+          \ #text(size: 8pt, fill: muted)[#t("seen-on") #g.where.zip(g.services).map(((w, s)) => if s == "" { w } else { w + " (" + s + ")" }).join(", ")]
         ]
       ],
     )),
@@ -343,12 +384,15 @@
 = #t("ports")
 #intro(t("ports-intro"))
 #data-table(
-  (auto, auto, 1fr),
-  (t("port"), t("service"), t("detail")),
+  (auto, auto, 1fr, auto),
+  (t("port"), t("service"), t("detail"), t("identified")),
   data.ports.map(p => (
     [#mono(p.port) #if p.sensitive { pill(t("sensitive"), status-colors.ATTENTION) }],
     p.service,
-    if p.detail == "-" { "" } else { p.detail },
+    [#if p.detail != "-" [#p.detail] #if p.cpe.len() > 0 [\ #text(size: 7pt, fill: muted, p.cpe.join(", "))]],
+    text(size: 7.5pt, fill: muted, if p.method == "table" { t("method-table") } else if p.method == "" { "" } else {
+      t("method-probed") + ", " + t("confidence") + " " + p.conf + "/10"
+    }),
   )),
 )
 
@@ -358,15 +402,61 @@
   (1fr, auto, auto, 1.1fr, auto),
   (t("name"), t("grade"), t("protocols"), t("certificate"), t("expires")),
   data.tls.map(e => (
-    [#e.name:#e.port #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
+    [#e.name:#e.port #if e.service != "" [\ #text(size: 7.5pt, fill: muted, e.service)] #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
     text(weight: "bold", fill: tool-color(e.grade_severity), e.grade),
     e.protocols.join(", "),
-    [#e.subject #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
+    [#e.subject #if e.san != "" [\ #text(size: 7.5pt, fill: muted)[#t("san") #e.san]] #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
     if e.expires == "" { "" } else {
       [#e.expires.slice(0, calc.min(10, e.expires.len())) \ #text(size: 7.5pt, fill: if type(e.days) == int and e.days < int(data.cert_warn_days) {
         status-colors.ERROR
       } else { muted }, [#e.days #t("days-left")])]
     },
+  )),
+)
+
+#let place-list(g) = if g.everywhere { t("everywhere") } else { g.where.join(", ") }
+== #t("attacks")
+#intro(t("attacks-intro"))
+#data-table(
+  (auto, 1fr, 1fr),
+  (t("check-id"), t("result"), t("where")),
+  data.tls_details.attacks.map(g => (
+    mono(g.id),
+    [#if g.severity in severity-colors { pill(g.severity, severity-colors.at(g.severity)) } else { g.severity } #g.finding],
+    text(size: 7.5pt, fill: muted, place-list(g)),
+  )),
+)
+== #t("lower")
+#intro(t("lower-intro"))
+#data-table(
+  (auto, 1fr, 1fr),
+  (t("check-id"), t("result"), t("where")),
+  data.tls_details.lower.map(g => (
+    mono(g.id),
+    [#pill(g.severity, severity-colors.at(g.severity, default: ink)) #g.finding],
+    text(size: 7.5pt, fill: muted, place-list(g)),
+  )),
+)
+#if data.tls_details.skipped.len() > 0 [
+  == #t("skipped")
+  #intro(t("skipped-intro"))
+  #data-table(
+    (auto, 1fr, 1fr),
+    (t("check-id"), t("result"), t("where")),
+    data.tls_details.skipped.map(g => (mono(g.id), [#g.severity #g.finding], text(size: 7.5pt, fill: muted, place-list(g)))),
+  )
+]
+== #t("certs")
+#intro(t("certs-intro"))
+#data-table(
+  (1fr, 1fr, 1fr, 1fr),
+  (t("name"), t("issuer"), t("key"), t("fingerprint")),
+  data.tls_details.certs.map(c => (
+    [#c.at("cert_commonName", default: "") \ #text(size: 7.5pt, fill: muted, c.where.join(", "))],
+    [#c.at("cert_caIssuers", default: "") \ #text(size: 7.5pt, fill: muted)[#t("valid-from") #c.at("cert_notBefore", default: "")]],
+    [#c.at("cert_keySize", default: "") \ #text(size: 7.5pt, fill: muted, c.at("cert_signatureAlgorithm", default: ""))],
+    // Breaks every 16 hex digits so the fingerprint fits the column.
+    mono(c.at("cert_fingerprintSHA256", default: "").clusters().chunks(16).map(x => x.join()).join("\u{200B}")),
   )),
 )
 
@@ -387,6 +477,14 @@
     )
   }),
 )
+#for s in data.ssh.filter(s => s.completed) [
+  == #t("ssh-details") (#s.port)
+  #key-values((
+    (t("host-key"), s.fingerprints.map(f => mono(f)).join(linebreak())),
+    ..("kex", "key", "enc", "mac").map(k => (k, text(size: 8pt, s.algorithms.at(k).join(", ")))),
+    ..if s.notes.len() > 0 { ((t("ssh-notes"), text(size: 8pt, s.notes.join(linebreak()))),) },
+  ))
+]
 
 #if data.web_ran == "1" or data.web.len() > 0 [
   = #t("web")
@@ -409,14 +507,18 @@
       rows
     }).flatten().chunks(3),
   )
+  #if data.web_runs.len() > 0 [
+    == #t("web-runs")
+    #key-values(data.web_runs.map(r => (r.site, text(size: 8pt, r.lines.join(linebreak())))))
+  ]
 ]
 
 = #t("vulners")
 #intro(t("vulners-intro"))
 #data-table(
   (auto, auto, auto, 1fr),
-  (t("port"), t("total"), t("high"), t("highest")),
-  data.vulners.map(v => (mono(v.port), str(v.total), str(v.high), v.max)),
+  (t("port"), t("cve"), t("cvss"), t("exploit")),
+  data.vulners.map(v => (mono(v.port), mono(v.id), v.cvss, v.exploit)),
 )
 
 = #t("notes")

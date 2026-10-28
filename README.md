@@ -235,11 +235,16 @@ address, to send to its owner. It says who ran the scan, from which machine,
 when it started and ended, what was tested and with which tool versions. Then
 it gives what changed, the findings to fix, the accepted risks, the open
 ports, the TLS, SSH and web details, the CVEs by version on TCP ports like
-`REPORT.txt`, and the notes. An annex gives the SHA-256 of every file of the
-target folder, except `report.json` and `REPORT.pdf`.
+`REPORT.txt`, and the notes. The TLS section also lists every known attack
+testssl tested with its result, its LOW and MEDIUM results except the ones per
+cipher suite, the tests it could not run, and each certificate. The SSH
+section gives the algorithms, the host key fingerprint and the notes of
+ssh-audit. The open ports say how nmap identified each service, and the scope
+says how many ports were not open. An annex gives the SHA-256 of every file of
+the target folder, except `report.json` and `REPORT.pdf`.
 
-The PDF adds no advice and no judgment of its own. Messages come from the
-tools, and from the script for its own checks (DNS, sensitive ports, SSH
+The PDF adds no advice and no judgment of its own, and cuts no text. Messages
+come from the tools, and from the script for its own checks (DNS, sensitive ports, SSH
 login, certificate expiry, failed checks). The severity shown is the one
 testssl and nuclei give. An expired acceptance is said next to the message.
 In each section, findings with the same check and the exact same message
