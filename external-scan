@@ -17,10 +17,13 @@ CERT_WARN_DAYS=30
 KEEP_MONTHS=12
 # A full UDP scan takes about 18 hours because Linux rate limits ICMP replies, so only these.
 UDP_PORTS=53,69,123,161,443,500,1194,1900,3478,4500,5060,51820
+# Remote access, admin web interfaces, databases and file sharing: risky when open to the Internet.
+SENSITIVE_PORTS=21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,6443,8006,8443,9090,9200,9443,10000,11211,27017
 KUMA_URL=
 TARGET_IPS=()
 TARGET_LABELS=()
 CHECKS=()
+ACCEPTS=()
 LOG=
 RUN_DIR=
 NMAP_ARGS=()
@@ -65,6 +68,20 @@ valid_port() {
     [[ $1 =~ ^[1-9][0-9]{0,4}$ ]] && (( $1 <= 65535 ))
 }
 
+valid_date() {
+    [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && $(date -d "$1" +%F 2>/dev/null) == "$1" ]]
+}
+
+# Reads "udp_ports" or "sensitive_ports": a comma separated list, or "none".
+port_list() {
+    local n=$1 value=$2 p
+    [[ $value == none ]] && return
+    for p in ${value//,/ }; do
+        valid_port "$p" || die "line $n: invalid port '$p'"
+    done
+    echo "$value"
+}
+
 is_target() {
     local known
     for known in "${TARGET_IPS[@]}"; do
@@ -74,7 +91,7 @@ is_target() {
 }
 
 parse_config() {
-    local line n=0 current="" ip label
+    local line n=0 current="" ip label reason list
     local -a f
     [[ -r $CONFIG ]] || die "cannot read $CONFIG"
     while IFS= read -r line || [[ -n $line ]]; do
@@ -84,8 +101,18 @@ parse_config() {
         read -r -a f <<<"$line"
 
         if [[ $line =~ ^[[:space:]] ]]; then
-            [[ -n $current ]] || die "line $n: indented check outside a target block"
-            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>'"
+            [[ -n $current ]] || die "line $n: indented line outside a target block"
+            if [[ ${f[0]} == accept ]]; then
+                [[ ${#f[@]} -ge 5 && ${f[2]} == until ]] \
+                    || die "line $n: expected 'accept <key pattern> until <YYYY-MM-DD> <reason>'"
+                [[ ${f[1]} =~ ^[A-Za-z0-9._:@*?/-]+$ ]] || die "line $n: invalid key pattern '${f[1]}'"
+                valid_date "${f[3]}" || die "line $n: invalid date '${f[3]}', use YYYY-MM-DD"
+                reason="${f[*]:4}"
+                reason=${reason#\"}
+                ACCEPTS+=("$current"$'\t'"${f[1]}"$'\t'"${f[3]}"$'\t'"${reason%\"}")
+                continue
+            fi
+            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>' or 'accept ...'"
             [[ ${f[0]} =~ ^(https|tls|smtp|imap|pop3)$ ]] || die "line $n: unknown mode '${f[0]}'"
             [[ ${f[1]} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "line $n: invalid name '${f[1]}'"
             valid_port "${f[2]}" || die "line $n: invalid port '${f[2]}'"
@@ -113,17 +140,10 @@ parse_config() {
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^[1-9][0-9]*$ ]] || die "line $n: keep_months needs a number of at least 1"
                 KEEP_MONTHS=${f[1]}
                 ;;
-            udp_ports)
-                [[ ${#f[@]} -eq 2 ]] || die "line $n: udp_ports needs a comma separated list or 'none'"
-                if [[ ${f[1]} == none ]]; then
-                    UDP_PORTS=
-                else
-                    local p
-                    for p in ${f[1]//,/ }; do
-                        valid_port "$p" || die "line $n: invalid UDP port '$p'"
-                    done
-                    UDP_PORTS=${f[1]}
-                fi
+            udp_ports | sensitive_ports)
+                [[ ${#f[@]} -eq 2 ]] || die "line $n: ${f[0]} needs a comma separated list or 'none'"
+                list=$(port_list "$n" "${f[1]}") || exit 1
+                if [[ ${f[0]} == udp_ports ]]; then UDP_PORTS=$list; else SENSITIVE_PORTS=$list; fi
                 ;;
             kuma_url)
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^https?:// ]] || die "line $n: kuma_url needs an http(s) URL"
@@ -188,21 +208,25 @@ flag() {
     [[ $status == ERROR ]] || status=ATTENTION
 }
 
+# A finding has a stable key, so it can be accepted and compared with the previous scan.
+add_finding() {
+    findings+=("$1"$'\t'"$2")
+}
+
 check_dns() {
     local fqdn=$1 addrs
     [[ $dns_done == *" $fqdn "* ]] && return
     dns_done+="$fqdn "
+    tested+=" dns/$fqdn "
     if ! addrs=$(python3 "$PARSE" resolve "$fqdn" 2>>"$LOG"); then
-        notes+=("$fqdn does not resolve in DNS. It was tested on $ip anyway.")
-        flag
+        add_finding "dns/$fqdn" "$fqdn does not resolve in DNS. It was tested on $ip anyway."
     elif [[ " $addrs " != *" $ip "* ]]; then
-        notes+=("$fqdn resolves to $addrs, not to $ip. It was tested on $ip anyway.")
-        flag
+        add_finding "dns/$fqdn" "$fqdn resolves to $addrs, not to $ip. It was tested on $ip anyway."
     fi
 }
 
 run_testssl() {
-    local mode=$1 fqdn=$2 port=$3 name shown target parsed rc kind a b c line
+    local mode=$1 fqdn=$2 port=$3 host=${2:-$ip} name shown target parsed rc kind a b c line
     local -a args=(--quiet --color 0 --warnings batch --overwrite --connect-timeout 10 --openssl-timeout 10)
     if [[ -n $fqdn ]]; then
         name=${fqdn}_$port
@@ -230,22 +254,22 @@ run_testssl() {
         flag
         return
     fi
+    tested+=" tls/$host/$port cert/$host/$port "
     while IFS=$'\t' read -r kind a b c; do
         case $kind in
             CERT)
                 line=$(printf '%-45s expires %s, %s days left' "$shown" "$a" "$b")
                 if (( b < 0 )); then
                     line+="  EXPIRED"
-                    flag
+                    add_finding "cert/$host/$port" "Certificate on $shown expired on $a."
                 elif (( b < CERT_WARN_DAYS )); then
                     line+="  RENEW SOON"
-                    flag
+                    add_finding "cert/$host/$port" "Certificate on $shown expires in $b days ($a)."
                 fi
                 certs+=("$line")
                 ;;
             ISSUE)
-                tls+=("$shown  $a  $b: $c")
-                flag
+                add_finding "tls/$host/$port/$b" "testssl $a on $shown: $c"
                 ;;
         esac
     done <<<"$parsed"
@@ -261,14 +285,99 @@ run_ssh_audit() {
         flag
         return
     fi
+    tested+=" ssh/$port "
     while IFS=$'\t' read -r kind a b c; do
         case $kind in
-            FAIL) ssh+=("port $port  $a $b: $c") ;;
-            CVE) ssh+=("port $port  $a (CVSS $b): $c") ;;
-            *) continue ;;
+            FAIL) add_finding "ssh/$port/$a/$b" "ssh-audit on port $port, $a $b: $c" ;;
+            CVE) add_finding "ssh/$port/cve/$a" "ssh-audit on port $port, $a (CVSS $b): $c" ;;
         esac
-        flag
     done <<<"$parsed"
+}
+
+# Lists the login methods of each SSH port. Tries no login, but sshd may log one aborted attempt.
+run_ssh_auth() {
+    local ports=$1 port methods
+    log "[$ip] nmap ssh-auth-methods on port(s) $ports"
+    timeout 10m nmap -Pn -sT -p "$ports" --script ssh-auth-methods -oX "$dir/ssh-auth.xml" "$ip" \
+        </dev/null >/dev/null 2>>"$LOG"
+    while IFS=$'\t' read -r port methods; do
+        [[ -n $port ]] || continue
+        tested+=" sshpw/$port "
+        if [[ " $methods " == *" password "* || " $methods " == *" keyboard-interactive "* ]]; then
+            add_finding "sshpw/$port" "SSH on port $port accepts password login ($methods). Prefer keys only."
+        fi
+    done < <(python3 "$PARSE" ssh-auth "$dir/ssh-auth.xml" 2>>"$LOG")
+}
+
+check_sensitive_ports() {
+    local p svc
+    tested+=" sensitive "
+    while IFS=$'\t' read -r p svc _ _; do
+        [[ $p == */tcp && ,$SENSITIVE_PORTS, == *,${p%/tcp},* ]] || continue
+        add_finding "sensitive/${p%/tcp}" "Port $p ($svc) is open to the Internet. Remote access and admin ports should be filtered by source IP or reached through a VPN."
+    done <"$dir/ports.tsv"
+}
+
+# Splits the findings into accepted and needing attention, and spots expired or unused accept lines.
+classify_findings() {
+    local f key text a aip pattern until reason matched
+    local -A used=() count=()
+    for f in "${findings[@]}"; do
+        key=${f%%$'\t'*}
+        text=${f#*$'\t'}
+        matched=""
+        for a in "${ACCEPTS[@]}"; do
+            IFS=$'\t' read -r aip pattern until reason <<<"$a"
+            [[ $aip == "$ip" ]] || continue
+            # shellcheck disable=SC2053 # The pattern is a glob on purpose.
+            if [[ $key == $pattern ]]; then
+                matched=$a
+                used[$pattern]=1
+                break
+            fi
+        done
+        if [[ -z $matched ]]; then
+            attention+=("$key"$'\t'"$text")
+        elif [[ $until < $TODAY ]]; then
+            attention+=("$key"$'\t'"$text (accepted until $until, the acceptance has expired)")
+        else
+            count[$pattern]=$(( ${count[$pattern]:-0} + 1 ))
+        fi
+    done
+    # One line per accept line keeps the report short. findings.tsv lists every finding.
+    for a in "${ACCEPTS[@]}"; do
+        IFS=$'\t' read -r aip pattern until reason <<<"$a"
+        [[ $aip == "$ip" ]] || continue
+        if [[ -z ${used[$pattern]:-} ]]; then
+            notes+=("accept $pattern matched nothing in this scan. If the risk is gone, the line can be removed.")
+        elif [[ -n ${count[$pattern]:-} ]]; then
+            accepted+=("$pattern (${count[$pattern]} finding(s)) until $until: $reason")
+        fi
+    done
+    (( ${#attention[@]} == 0 )) || flag
+}
+
+# A finding counts as fixed only if the check that produced it ran again, so a failed tool never looks like a fix.
+compare_findings() {
+    local prev_file=$1 key text scope
+    printf '%s\n' "${findings[@]}" | sed '/^$/d' >"$dir/findings.tsv"
+    if [[ ! -f $prev_file ]]; then
+        [[ -z $prev_date ]] || changes+=("No findings in the previous report, findings start their history today.")
+        return
+    fi
+    while IFS=$'\t' read -r key text; do
+        [[ -n $key ]] || continue
+        changes+=("NEW finding    $key")
+    done < <(awk -F'\t' 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$prev_file" "$dir/findings.tsv")
+    while IFS=$'\t' read -r key text; do
+        [[ -n $key ]] || continue
+        case $key in
+            sensitive/*) scope=sensitive ;;
+            tls/* | cert/*) scope=$(cut -d/ -f1-3 <<<"$key") ;;
+            *) scope=$(cut -d/ -f1-2 <<<"$key") ;;
+        esac
+        [[ $tested == *" $scope "* ]] && changes+=("FIXED finding  $key")
+    done < <(awk -F'\t' 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$dir/findings.tsv" "$prev_file")
 }
 
 section() {
@@ -285,9 +394,15 @@ section() {
 }
 
 write_report() {
-    local -a open=()
+    local -a open=() needs=() suggest=()
+    local item next_year
+    next_year=$(date -d '+1 year' +%F)
     [[ ! -s $dir/ports.tsv ]] || mapfile -t open < <(
         awk -F'\t' '{ printf "%-10s %-14s %s\n", $1, $2, ($4 == "-" ? "" : $4) }' "$dir/ports.tsv")
+    for item in "${attention[@]}"; do
+        needs+=("${item%%$'\t'*}" "    ${item#*$'\t'}")
+        suggest+=("accept ${item%%$'\t'*} until $next_year \"why this risk is accepted\"")
+    done
     {
         echo "External scan report"
         echo "Target : $ip ($label)"
@@ -295,22 +410,24 @@ write_report() {
         echo "Scan   : $SCAN_TYPE"
         echo "Status : $status"
         echo
-        echo "OK means nothing needs a look. ATTENTION means read the sections below."
+        echo "OK means nothing needs a look. ATTENTION means read \"What changed\" and \"Needs attention\"."
         echo "ERROR means the scan did not complete and this report is partial."
+        section "What changed${prev_date:+ since $prev_date}" \
+            "Ports that appeared (NEW) or disappeared (GONE), and findings that are new or fixed since the previous scan." "${changes[@]}"
+        section "Needs attention" \
+            "Findings that are not accepted in the config. Each one starts with its key." "${needs[@]}"
+        section "Accepted risks" \
+            "Accept lines of the config, the number of findings each one covers and why. Findings come back in \"Needs attention\" after the date." "${accepted[@]}"
+        (( ${#suggest[@]} == 0 )) || section "Suggested accept lines" \
+            "To accept a known risk, copy its line under this target in external-scan.conf and write the real reason. A '*' in the key matches anything." "${suggest[@]}"
         section "Open ports" \
             "Ports that answer from the Internet, with the service nmap recognised. All TCP ports, UDP only for: ${UDP_PORTS:-none}." "${open[@]}"
-        section "Changes${prev_date:+ since $prev_date}" \
-            "Ports that appeared (NEW) or disappeared (GONE) since the previous scan." "${changes[@]}"
         section "Certificates" \
             "Expiry date of each certificate seen. Alert below $CERT_WARN_DAYS days." "${certs[@]}"
-        section "TLS problems" \
-            "Findings that testssl rates HIGH or CRITICAL. FATAL means the test could not run. Details in testssl/." "${tls[@]}"
-        section "SSH problems" \
-            "Algorithms ssh-audit says to remove, and known CVEs. Details in ssh-audit_<port>.json." "${ssh[@]}"
         section "Known vulnerabilities by version (vulners)" \
             "CVEs matched on the version string only. Distro packages often fix them without changing the version, so check before acting. Not counted in the status. Details in nmap.txt." "${vulns[@]}"
         section "Notes" \
-            "Skipped checks, DNS mismatches and tool errors." "${notes[@]}"
+            "Skipped checks, tool errors and accept lines that match nothing." "${notes[@]}"
     } >"$dir/REPORT.txt"
 }
 
@@ -318,9 +435,9 @@ scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
-    local new_count=0 udp_done=0
+    local new_count=0 udp_done=0 tested=" " ssh_ports=""
     local c cip mode fqdn port p svc tunnel high max total
-    local -a changes=() certs=() tls=() ssh=() vulns=() notes=()
+    local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=()
 
     mkdir -p "$dir/testssl"
     log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
@@ -378,7 +495,6 @@ scan_target() {
             [[ -n $p ]] || continue
             changes+=("GONE  $(port_line "$p" <<<"$prev_tsv")")
         done < <(comm -23 <(cut -f1 <<<"$prev_tsv" | sort) <(sort <<<"$cur_ports"))
-        (( ${#changes[@]} )) || changes+=("No change.")
         if (( new_count )); then
             flag
             ANY_NEW_PORT=1
@@ -410,6 +526,7 @@ scan_target() {
         port=${p%/*}
         if [[ $svc == ssh ]]; then
             run_ssh_audit "$port"
+            ssh_ports+=${ssh_ports:+,}$port
         elif [[ $covered == *" $port "* ]]; then
             continue
         elif [[ $tunnel == ssl || $svc =~ ^(ssl|https|https-alt|imaps|pop3s|smtps)$ ]]; then
@@ -419,13 +536,20 @@ scan_target() {
         fi
     done <"$dir/ports.tsv"
 
+    [[ -z $ssh_ports ]] || run_ssh_auth "$ssh_ports"
+    check_sensitive_ports
+    compare_findings "${prev:+${prev%/nmap.xml}/findings.tsv}"
+    [[ -z $prev_date || ${#changes[@]} -gt 0 ]] || changes+=("No change.")
+    classify_findings
+
     write_report
     record
     log "[$ip] done, status $status"
 }
 
 record() {
-    SUMMARY+=("$(printf '%-9s %-45s %s new port(s)  %s/REPORT.txt' "$status" "$ip ($label)" "$new_count" "${dir##*/}")")
+    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/REPORT.txt' \
+        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}")")
     case $status in
         ERROR) ANY_ERROR=1 ;;
         ATTENTION) ANY_ATTENTION=1 ;;
@@ -498,6 +622,8 @@ main() {
         kuma_push down "external-scan $TODAY: scan error, see SUMMARY.txt"
     elif (( ANY_NEW_PORT )); then
         kuma_push down "external-scan $TODAY: new open port, see SUMMARY.txt"
+    elif (( ANY_ATTENTION )); then
+        kuma_push down "external-scan $TODAY: findings to look at, see SUMMARY.txt"
     else
         kuma_push up "external-scan $TODAY: $global"
     fi

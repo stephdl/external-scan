@@ -38,9 +38,17 @@ keep_months 12
 #   SIP, WireGuard)
 # udp_ports 53,123,161,500,4500,51820
 #
+# sensitive_ports <port,port,...> | none
+#   TCP ports that are risky when open to the Internet: remote access, admin
+#   web interfaces, databases, file sharing. Each one found open is a finding
+#   ("sensitive/<port>"), every month, until it is closed or accepted.
+#   Default: 21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,
+#   6443,8006,8443,9090,9200,9443,10000,11211,27017
+# sensitive_ports 22,3389,9090
+#
 # kuma_url <url>
 #   Optional. URL of an Uptime Kuma "Push" monitor. After each scan the script
-#   sends "up" when there is no error and no new open port, "down" otherwise.
+#   sends "up" when the status is OK, "down" otherwise.
 #   The URL contains a secret token: it is never written to the logs.
 # kuma_url https://kuma.example.com/api/push/XXXXXXXXXX
 #
@@ -83,6 +91,26 @@ keep_months 12
 #            skipped and the report says so.
 #   A port tested by name is not tested a second time without a name.
 #
+#   accept <key pattern> until <YYYY-MM-DD> <reason>   (indented, optional)
+#   Accepts a known risk on the IP of the block above, so it stops raising
+#   the status every month. The report still lists it under "Accepted risks"
+#   with the reason, and it comes back in "Needs attention" after the date.
+#   An accept line that matches nothing is reported, so it can be removed.
+#   <key pattern>  The key of a finding, as printed in the report. Each
+#                  report ends with ready-to-copy accept lines. "*" matches
+#                  anything, so one line can cover the same finding on many
+#                  ports. Keys look like this:
+#                    tls/<name or ip>/<port>/<testssl id>   TLS finding
+#                    cert/<name or ip>/<port>               certificate expiry
+#                    ssh/<port>/<kex|key|enc|mac>/<alg>     weak SSH algorithm
+#                    ssh/<port>/cve/<CVE id>                SSH CVE
+#                    sshpw/<port>                           SSH accepts passwords
+#                    sensitive/<port>                       sensitive port open
+#                    dns/<name>                             name not on this IP
+#   <YYYY-MM-DD>   Required. Review the risk again at that date, at most a
+#                  year ahead is a good habit.
+#   <reason>       Free text: why the risk is accepted, or what mitigates it.
+#
 # ---------------------------------------------------------------------------
 # EXAMPLES (documentation addresses, remove the leading "# " to use)
 # ---------------------------------------------------------------------------
@@ -99,6 +127,8 @@ keep_months 12
 #   tls   mail.example.com  993   # IMAPS
 #   pop3  mail.example.com  110   # POP3, STARTTLS
 #   tls   mail.example.com  995   # POP3S
+#   accept sensitive/9090 until 2027-06-30 "firewall GUI, CrowdSec bans brute force, VPN planned"
+#   accept tls/*/*/BREACH until 2027-06-30 "HTTP compression needed, no secret in responses"
 #
 # A second address with no name to test: the defaults are enough.
 #

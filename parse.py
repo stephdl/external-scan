@@ -18,6 +18,11 @@ def clean(text, limit=200):
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
+def key_part(text):
+    # Finding keys are copied into "accept" lines: no spaces, no glob characters, no "#" (a config comment).
+    return "".join(c if c.isalnum() or c in "._:@-" else "_" for c in str(text)).strip("_") or "-"
+
+
 def check_ip(value):
     # ip_address() rejects ranges and host names, which nmap would happily expand.
     print(ipaddress.ip_address(value).compressed)
@@ -90,10 +95,11 @@ def testssl(path):
                 continue
             print(f"CERT\t{finding.strip()}\t{(end - now).days}")
         # One line per offered cipher would flood the report, cipherlist_* already sums them up.
-        elif ident.startswith(("cipher-", "cipher_order-")):
+        # The overall grade only repeats the other findings.
+        elif ident.startswith(("cipher-", "cipher_order-")) or ident == "overall_grade":
             continue
         elif severity in ("HIGH", "CRITICAL", "FATAL"):
-            print(f"ISSUE\t{severity}\t{ident}\t{clean(finding) or '-'}")
+            print(f"ISSUE\t{severity}\t{key_part(ident)}\t{clean(finding) or '-'}")
 
 
 def ssh_audit(path):
@@ -113,9 +119,19 @@ def ssh_audit(path):
                 # Algorithms newer than ssh-audit, like the post-quantum mlkem ones, are not a weakness.
                 if note == "using unknown algorithm":
                     continue
-                print(f"FAIL\t{kind}\t{alg.get('algorithm', '?')}\t{clean(note) or '-'}")
+                print(f"FAIL\t{kind}\t{key_part(alg.get('algorithm', '?'))}\t{clean(note) or '-'}")
     for cve in data.get("cves") or []:
-        print(f"CVE\t{cve.get('name', '?')}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
+        print(f"CVE\t{key_part(cve.get('name', '?'))}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
+
+
+def ssh_auth(path):
+    for port in open_ports(load_nmap(path)):
+        for script in port.findall("script"):
+            if script.get("id") != "ssh-auth-methods":
+                continue
+            methods = sorted({elem.text.strip() for elem in script.iter("elem") if elem.text and elem.text.strip()})
+            if methods:
+                print(f"{port.get('portid')}\t{' '.join(methods)}")
 
 
 COMMANDS = {
@@ -125,6 +141,7 @@ COMMANDS = {
     "vulners": vulners,
     "testssl": testssl,
     "ssh-audit": ssh_audit,
+    "ssh-auth": ssh_auth,
 }
 
 
