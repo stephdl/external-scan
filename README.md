@@ -12,6 +12,30 @@ For each address it:
 5. scans each web site name with nuclei, when `web_scan` is on,
 6. writes a short plain text report, and a PDF for the owner when `pdf_report` is on.
 
+## Software used
+
+The scan relies on free software. `install.sh` installs all of it.
+
+| Software | What it does here | Comes from |
+|---|---|---|
+| [nmap](https://nmap.org) | finds the open TCP and UDP ports and the service behind each | distribution package |
+| [vulners](https://github.com/vulnersCom/nmap-vulners) | nmap script that lists known CVEs for the version a service announces | shipped with nmap |
+| [testssl.sh](https://testssl.sh) | checks certificates, protocols, ciphers and known TLS attacks | git clone, pinned tag |
+| [ssh-audit](https://github.com/jtesta/ssh-audit) | checks SSH algorithms and known SSH CVEs | git clone, pinned tag |
+| OpenSSH client | asks an SSH server which login methods it accepts, without trying any | distribution package |
+| [nuclei](https://github.com/projectdiscovery/nuclei) | looks for known web flaws with its critical and high templates | release binary, SHA-256 checked |
+| [typst](https://typst.app) | renders the PDF report | release binary, SHA-256 checked |
+| python3 | reads the tool results and writes the reports | distribution package |
+| bash | runs the scan | distribution package |
+| systemd | runs the scan monthly as an unprivileged user with the raw socket right | distribution package |
+
+Helpers: socat, openssl, dig and hexdump for testssl.sh, git to fetch and
+update the cloned tools, curl for Uptime Kuma, and ndiff to compare two nmap
+scans when the distribution ships it.
+
+The pinned versions are at the top of `install.sh`. Each PDF report prints the
+versions that ran the scan.
+
 ## Before you scan
 
 **Get written permission from the owner of every address you scan.** Only
