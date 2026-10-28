@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read nmap, testssl.sh and ssh-audit output for external-scan.
+"""Read nmap, testssl.sh, ssh-audit and nuclei output for external-scan.
 
 Each subcommand prints tab separated lines that the bash script reads.
 Empty fields are printed as "-" because bash "read" merges consecutive tabs.
@@ -126,6 +126,23 @@ def ssh_audit(path):
         print(f"CVE\t{key_part(cve.get('name', '?'))}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
 
 
+def nuclei(path):
+    # One template can match several URLs, one line per template keeps one finding per key.
+    found = {}
+    with open(path) as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            info = item.get("info") or {}
+            ident = key_part(item.get("template-id", "?"))
+            entry = found.setdefault(ident, [info.get("severity", "?"), info.get("name", ""), []])
+            entry[2].append(item.get("matched-at", ""))
+    for ident, (severity, name, urls) in sorted(found.items()):
+        more = f" and {len(urls) - 1} more" if len(urls) > 1 else ""
+        print(f"ISSUE\t{str(severity).upper()}\t{ident}\t{clean(f'{name} at {urls[0]}{more}') or '-'}")
+
+
 def ssh_auth(path):
     for port in open_ports(load_nmap(path)):
         for script in port.findall("script"):
@@ -143,6 +160,7 @@ COMMANDS = {
     "vulners": vulners,
     "testssl": testssl,
     "ssh-audit": ssh_audit,
+    "nuclei": nuclei,
     "ssh-auth": ssh_auth,
 }
 

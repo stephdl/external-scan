@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Monthly external exposure scan.
-# Runs nmap, testssl.sh and ssh-audit against the targets of external-scan.conf
+# Runs nmap, testssl.sh, ssh-audit and nuclei against the targets of external-scan.conf
 # and writes a plain text report per target. See README.md.
 set -uo pipefail
 export LC_ALL=C PYTHONDONTWRITEBYTECODE=1
@@ -11,6 +11,9 @@ OUTPUT=$BASE/results
 PARSE=$BASE/parse.py
 TESTSSL=$BASE/tools/testssl.sh/testssl.sh
 SSH_AUDIT=$BASE/tools/ssh-audit/ssh-audit.py
+NUCLEI=$BASE/tools/nuclei/nuclei
+# nuclei keeps its config and templates under $HOME, the scan user can only write here.
+NUCLEI_HOME=$BASE/cache/nuclei
 TODAY=$(date +%F)
 
 CERT_WARN_DAYS=30
@@ -20,8 +23,12 @@ UDP_PORTS=53,69,123,161,443,500,1194,1900,3478,4500,5060,51820
 # Remote access, admin web interfaces, databases and file sharing: risky when open to the Internet.
 SENSITIVE_PORTS=21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,6443,8006,8443,9090,9200,9443,10000,11211,27017
 KUMA_URL=
+WEB_SCAN=off
 TARGET_IPS=()
 TARGET_LABELS=()
+declare -A TARGET_WEB_SCAN=()
+NUCLEI_READY=0
+NUCLEI_NOTE=
 CHECKS=()
 ACCEPTS=()
 LOG=
@@ -124,7 +131,13 @@ parse_config() {
                 ACCEPTS+=("$current"$'\t'"${f[1]}"$'\t'"${f[3]}"$'\t'"${reason%\"}")
                 continue
             fi
-            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>' or 'accept ...'"
+            if [[ ${f[0]} == web_scan ]]; then
+                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: web_scan needs 'on' or 'off'"
+                [[ -z ${TARGET_WEB_SCAN[$current]:-} ]] || die "line $n: second web_scan line for $current"
+                TARGET_WEB_SCAN[$current]=${f[1]}
+                continue
+            fi
+            (( ${#f[@]} == 3 )) || die "line $n: expected '<mode> <fqdn> <port>', 'accept ...' or 'web_scan on|off'"
             [[ ${f[0]} =~ ^(https|tls|smtp|imap|pop3)$ ]] || die "line $n: unknown mode '${f[0]}'"
             [[ ${f[1]} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "line $n: invalid name '${f[1]}'"
             valid_port "${f[2]}" || die "line $n: invalid port '${f[2]}'"
@@ -162,6 +175,10 @@ parse_config() {
                 # Kuma shows the URL with ?status=up&msg=OK&ping=, the script adds its own query.
                 KUMA_URL=${f[1]%%\?*}
                 ;;
+            web_scan)
+                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: web_scan needs 'on' or 'off'"
+                WEB_SCAN=${f[1]}
+                ;;
             *)
                 die "line $n: unknown keyword '${f[0]}'"
                 ;;
@@ -178,6 +195,35 @@ check_tools() {
     [[ -z $KUMA_URL ]] || command -v curl >/dev/null || die "missing command: curl"
     [[ -x $TESTSSL ]] || die "testssl.sh not found at $TESTSSL, run install.sh"
     [[ -f $SSH_AUDIT ]] || die "ssh-audit not found at $SSH_AUDIT, run install.sh"
+    if any_web_scan; then
+        [[ -x $NUCLEI ]] || die "nuclei not found at $NUCLEI, run install.sh"
+    fi
+}
+
+web_scan_on() {
+    [[ ${TARGET_WEB_SCAN[$1]:-$WEB_SCAN} == on ]]
+}
+
+any_web_scan() {
+    local c cip mode
+    for c in "${CHECKS[@]}"; do
+        read -r cip mode _ <<<"$c"
+        [[ $mode == https ]] && web_scan_on "$cip" && return 0
+    done
+    return 1
+}
+
+# Templates are updated once per run, before the first web scan.
+update_nuclei_templates() {
+    NUCLEI_READY=1
+    mkdir -p "$NUCLEI_HOME" 2>>"$LOG"
+    log "nuclei templates update"
+    # Without -duc on purpose: with it, nuclei skips the template download.
+    # Without templates at all, run_nuclei reports failed/web instead.
+    if ! HOME=$NUCLEI_HOME timeout 15m "$NUCLEI" -ut -nc </dev/null >/dev/null 2>>"$LOG" \
+        && [[ -d $NUCLEI_HOME/nuclei-templates/http ]]; then
+        NUCLEI_NOTE="The nuclei templates update failed, the web scan used the templates of a previous run. See scan.log."
+    fi
 }
 
 has_net_raw() {
@@ -312,6 +358,44 @@ run_ssh_audit() {
     done <<<"$parsed"
 }
 
+run_nuclei() {
+    local fqdn=$1 port=$2 name=${1}_$2 shown=$1:$2 vhost=$1 parsed rc kind a b c
+    (( NUCLEI_READY )) || update_nuclei_templates
+    web_ran=1
+    if [[ ! -d $NUCLEI_HOME/nuclei-templates/http ]]; then
+        add_finding "failed/web/$fqdn/$port" "No nuclei templates in $NUCLEI_HOME, the web scan of $shown did not run. See scan.log."
+        failures=1
+        return
+    fi
+    [[ $port == 443 ]] || vhost=$shown
+    mkdir -p "$dir/nuclei"
+    log "[$ip] nuclei $shown"
+    # Connect to the authorized IP and present the name in SNI and Host, like testssl --ip.
+    # Redirects are not followed, so a redirect to another host is never scanned.
+    # No interactsh: its callbacks go to third party servers.
+    HOME=$NUCLEI_HOME timeout 30m "$NUCLEI" -duc -nc -ni -dr -jsonl -or -ot \
+        -pt http -s critical,high -etags dos,intrusive,fuzz \
+        -rl 20 -c 10 -timeout 10 \
+        -H "Host: $vhost" -sni "$fqdn" -u "https://$(host_port "$ip" "$port")" \
+        -o "$dir/nuclei/$name.jsonl" </dev/null >/dev/null 2>"$dir/nuclei/$name.log"
+    rc=$?
+    if (( rc != 0 )) || ! parsed=$(python3 "$PARSE" nuclei "$dir/nuclei/$name.jsonl" 2>>"$LOG"); then
+        add_finding "failed/web/$fqdn/$port" "nuclei gave no usable result on $shown (exit $rc). See nuclei/$name.log."
+        failures=1
+        return
+    fi
+    # nuclei drops a host that stops answering and still exits 0, so its missing findings are not fixed.
+    if grep -q 'found unresponsive' "$dir/nuclei/$name.log"; then
+        add_finding "failed/web/$fqdn/$port" "nuclei stopped on $shown, the site stopped answering. See nuclei/$name.log."
+        failures=1
+    else
+        tested+=" web/$fqdn/$port "
+    fi
+    while IFS=$'\t' read -r kind a b c; do
+        [[ $kind == ISSUE ]] && add_finding "web/$fqdn/$port/$b" "nuclei $a on $shown: $c"
+    done <<<"$parsed"
+}
+
 # The main nmap scan runs ssh-auth-methods, which lists the login methods without trying one.
 check_ssh_auth() {
     local ports=$1 auth port methods
@@ -398,7 +482,7 @@ compare_findings() {
         case $key in
             "" | failed/*) continue ;;
             sensitive/*) scope=sensitive ;;
-            tls/* | cert/*) scope=$(cut -d/ -f1-3 <<<"$key") ;;
+            tls/* | cert/* | web/*) scope=$(cut -d/ -f1-3 <<<"$key") ;;
             *) scope=$(cut -d/ -f1-2 <<<"$key") ;;
         esac
         [[ $tested == *" $scope "* ]] && changes+=("FIXED finding  $key")
@@ -460,7 +544,7 @@ scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
-    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports=""
+    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0
     local c cip mode fqdn port p svc tunnel high max total
     local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=()
 
@@ -544,7 +628,11 @@ scan_target() {
         check_dns "$fqdn"
         run_testssl "$mode" "$fqdn" "$port"
         covered+="$port "
+        if [[ $mode == https ]] && web_scan_on "$ip"; then
+            run_nuclei "$fqdn" "$port"
+        fi
     done
+    (( ! web_ran )) || [[ -z $NUCLEI_NOTE ]] || notes+=("$NUCLEI_NOTE")
 
     while IFS=$'\t' read -r p svc tunnel _; do
         [[ $p == */tcp ]] || continue
