@@ -4,6 +4,20 @@ These are ideas, not commitments. Each one says what it finds, how risky it
 is for the scanned network and what it costs to add. "Passive" means no packet
 goes to the target addresses.
 
+## Decisions
+
+- 1, 2 and 6 are done in #2.
+- 7 comes next, with nuclei, in its own pull request.
+- 3, 4, 5 and 8 are dropped.
+  - 3: a broken SPF or DMARC shows up within hours as rejected mail. A
+    monthly scan only adds value for a policy that is too loose, and that
+    rarely changes.
+  - 4: a monthly check sees a blocklisting weeks too late. Hourly monitoring
+    such as Uptime Kuma is the right place for it.
+  - 5: a wildcard certificate hides every subdomain from the certificate
+    logs, so crt.sh finds nothing useful.
+  - 8: it mostly repeats the scan.
+
 ## 1. SSH password login
 
 The nmap script `ssh-auth-methods` lists the login methods the SSH server
