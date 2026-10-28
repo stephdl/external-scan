@@ -89,6 +89,9 @@ def testssl(path):
             except ValueError:
                 continue
             print(f"CERT\t{finding.strip()}\t{(end - now).days}")
+        # One line per offered cipher would flood the report, cipherlist_* already sums them up.
+        elif ident.startswith(("cipher-", "cipher_order-")):
+            continue
         elif severity in ("HIGH", "CRITICAL", "FATAL"):
             print(f"ISSUE\t{severity}\t{ident}\t{clean(finding) or '-'}")
 
@@ -96,14 +99,20 @@ def testssl(path):
 def ssh_audit(path):
     with open(path) as handle:
         data = json.load(handle)
-    if not isinstance(data, dict) or not any(key in data for key in ("banner", "kex")):
+    if not isinstance(data, dict) or not isinstance(data.get("banner"), dict):
         raise ValueError(f"{path}: unexpected ssh-audit JSON")
+    # On a failed connection ssh-audit still writes a JSON skeleton, with an empty banner.
+    if not data["banner"].get("raw"):
+        raise ValueError(f"{path}: no SSH banner received")
     for kind in ("kex", "key", "enc", "mac"):
         for alg in data.get(kind) or []:
-            notes = alg.get("notes") or {}
+            notes = alg.get("notes") if isinstance(alg, dict) else None
             if not isinstance(notes, dict):
                 continue
             for note in notes.get("fail") or []:
+                # Algorithms newer than ssh-audit, like the post-quantum mlkem ones, are not a weakness.
+                if note == "using unknown algorithm":
+                    continue
                 print(f"FAIL\t{kind}\t{alg.get('algorithm', '?')}\t{clean(note) or '-'}")
     for cve in data.get("cves") or []:
         print(f"CVE\t{cve.get('name', '?')}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")

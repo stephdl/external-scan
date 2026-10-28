@@ -15,6 +15,8 @@ TODAY=$(date +%F)
 
 CERT_WARN_DAYS=30
 KEEP_MONTHS=12
+# A full UDP scan takes about 18 hours because Linux rate limits ICMP replies, so only these.
+UDP_PORTS=53,69,123,161,443,500,1194,1900,3478,4500,5060,51820
 KUMA_URL=
 TARGET_IPS=()
 TARGET_LABELS=()
@@ -23,6 +25,7 @@ LOG=
 RUN_DIR=
 NMAP_ARGS=()
 SCAN_TYPE=
+HAS_NET_RAW=0
 SUMMARY=()
 ANY_ERROR=0
 ANY_ATTENTION=0
@@ -109,6 +112,18 @@ parse_config() {
             keep_months)
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^[1-9][0-9]*$ ]] || die "line $n: keep_months needs a number of at least 1"
                 KEEP_MONTHS=${f[1]}
+                ;;
+            udp_ports)
+                [[ ${#f[@]} -eq 2 ]] || die "line $n: udp_ports needs a comma separated list or 'none'"
+                if [[ ${f[1]} == none ]]; then
+                    UDP_PORTS=
+                else
+                    local p
+                    for p in ${f[1]//,/ }; do
+                        valid_port "$p" || die "line $n: invalid UDP port '$p'"
+                    done
+                    UDP_PORTS=${f[1]}
+                fi
                 ;;
             kuma_url)
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^https?:// ]] || die "line $n: kuma_url needs an http(s) URL"
@@ -237,12 +252,12 @@ run_testssl() {
 }
 
 run_ssh_audit() {
-    local port=$1 out=$dir/ssh-audit_$1 parsed kind a b c
+    local port=$1 out=$dir/ssh-audit_$1.json parsed kind a b c
     log "[$ip] ssh-audit port $port"
-    timeout 5m python3 "$SSH_AUDIT" -n -p "$port" "$ip" </dev/null >"$out.txt" 2>>"$LOG"
-    timeout 5m python3 "$SSH_AUDIT" -j -p "$port" "$ip" </dev/null >"$out.json" 2>>"$LOG"
-    if ! parsed=$(python3 "$PARSE" ssh-audit "$out.json" 2>>"$LOG"); then
-        notes+=("Port $port: ssh-audit gave no usable result. See ssh-audit_$port.txt.")
+    # One connection only: sshd penalties, sshguard or CrowdSec cut or ban repeated unauthenticated connections.
+    timeout 5m python3 "$SSH_AUDIT" -jj -p "$port" "$ip" </dev/null >"$out" 2>>"$LOG"
+    if ! parsed=$(python3 "$PARSE" ssh-audit "$out" 2>>"$LOG"); then
+        notes+=("Port $port: ssh-audit gave no usable result. See ssh-audit_$port.json and scan.log.")
         flag
         return
     fi
@@ -283,7 +298,7 @@ write_report() {
         echo "OK means nothing needs a look. ATTENTION means read the sections below."
         echo "ERROR means the scan did not complete and this report is partial."
         section "Open ports" \
-            "TCP ports that answer from the Internet, with the service nmap recognised." "${open[@]}"
+            "Ports that answer from the Internet, with the service nmap recognised. All TCP ports, UDP only for: ${UDP_PORTS:-none}." "${open[@]}"
         section "Changes${prev_date:+ since $prev_date}" \
             "Ports that appeared (NEW) or disappeared (GONE) since the previous scan." "${changes[@]}"
         section "Certificates" \
@@ -291,7 +306,7 @@ write_report() {
         section "TLS problems" \
             "Findings that testssl rates HIGH or CRITICAL. FATAL means the test could not run. Details in testssl/." "${tls[@]}"
         section "SSH problems" \
-            "Algorithms ssh-audit says to remove, and known CVEs. Details in ssh-audit_<port>.txt." "${ssh[@]}"
+            "Algorithms ssh-audit says to remove, and known CVEs. Details in ssh-audit_<port>.json." "${ssh[@]}"
         section "Known vulnerabilities by version (vulners)" \
             "CVEs matched on the version string only. Distro packages often fix them without changing the version, so check before acting. Not counted in the status. Details in nmap.txt." "${vulns[@]}"
         section "Notes" \
@@ -302,7 +317,8 @@ write_report() {
 scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
-    local status=OK prev="" prev_date="" prev_tsv="" covered=" " dns_done=" " new_count=0
+    local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
+    local new_count=0 udp_done=0
     local c cip mode fqdn port p svc tunnel high max total
     local -a changes=() certs=() tls=() ssh=() vulns=() notes=()
 
@@ -317,7 +333,24 @@ scan_target() {
         record
         return
     fi
-    log "[$ip] nmap done, $(wc -l <"$dir/ports.tsv") open port(s)"
+    log "[$ip] nmap done, $(wc -l <"$dir/ports.tsv") open TCP port(s)"
+
+    if [[ -z $UDP_PORTS ]]; then
+        :
+    elif (( ! HAS_NET_RAW )); then
+        notes+=("UDP not scanned, it needs CAP_NET_RAW. Start the scan with systemctl.")
+    else
+        log "[$ip] nmap UDP started, ports $UDP_PORTS"
+        timeout 2h nmap -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
+            -oX "$dir/nmap-udp.xml" -oN "$dir/nmap-udp.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
+        if python3 "$PARSE" ports "$dir/nmap-udp.xml" >>"$dir/ports.tsv" 2>>"$LOG"; then
+            udp_done=1
+            log "[$ip] nmap UDP done"
+        else
+            notes+=("The UDP scan did not finish, UDP ports are missing. See scan.log.")
+            flag
+        fi
+    fi
 
     prev=$(find_previous "$ip")
     if [[ -z $prev ]]; then
@@ -325,15 +358,26 @@ scan_target() {
     else
         prev_date=$(basename "$(dirname "$(dirname "$prev")")")
         prev_tsv=$(python3 "$PARSE" ports "$prev")
+        cur_ports=$(cut -f1 "$dir/ports.tsv")
+        # UDP is compared only when both scans have it, so a missing UDP scan never looks like closed ports.
+        if (( udp_done )); then
+            if [[ -f ${prev%/nmap.xml}/nmap-udp.xml ]] \
+                && prev_udp=$(python3 "$PARSE" ports "${prev%/nmap.xml}/nmap-udp.xml" 2>>"$LOG"); then
+                prev_tsv+=$'\n'$prev_udp
+            else
+                cur_ports=$(grep -v '/udp$' <<<"$cur_ports")
+                changes+=("No UDP scan in the previous report. UDP ports start their baseline today.")
+            fi
+        fi
         while IFS= read -r p; do
             [[ -n $p ]] || continue
             changes+=("NEW   $(port_line "$p" <"$dir/ports.tsv")")
             new_count=$((new_count + 1))
-        done < <(comm -13 <(cut -f1 <<<"$prev_tsv" | sort) <(cut -f1 "$dir/ports.tsv" | sort))
+        done < <(comm -13 <(cut -f1 <<<"$prev_tsv" | sort) <(sort <<<"$cur_ports"))
         while IFS= read -r p; do
             [[ -n $p ]] || continue
             changes+=("GONE  $(port_line "$p" <<<"$prev_tsv")")
-        done < <(comm -23 <(cut -f1 <<<"$prev_tsv" | sort) <(cut -f1 "$dir/ports.tsv" | sort))
+        done < <(comm -23 <(cut -f1 <<<"$prev_tsv" | sort) <(sort <<<"$cur_ports"))
         (( ${#changes[@]} )) || changes+=("No change.")
         if (( new_count )); then
             flag
@@ -362,12 +406,16 @@ scan_target() {
     done
 
     while IFS=$'\t' read -r p svc tunnel _; do
+        [[ $p == */tcp ]] || continue
         port=${p%/*}
         if [[ $svc == ssh ]]; then
             run_ssh_audit "$port"
-        elif [[ $tunnel == ssl || $svc =~ ^(ssl|https|https-alt|imaps|pop3s|smtps)$ ]] \
-            && [[ $covered != *" $port "* ]]; then
+        elif [[ $covered == *" $port "* ]]; then
+            continue
+        elif [[ $tunnel == ssl || $svc =~ ^(ssl|https|https-alt|imaps|pop3s|smtps)$ ]]; then
             run_testssl tls "" "$port"
+        elif [[ $svc =~ ^(smtp|imap|pop3)$ ]]; then
+            run_testssl "$svc" "" "$port"
         fi
     done <"$dir/ports.tsv"
 
@@ -421,6 +469,7 @@ main() {
 
     NMAP_ARGS=(-Pn -sV --script vulners -p- --open)
     if has_net_raw; then
+        HAS_NET_RAW=1
         NMAP_ARGS+=(-sS --privileged)
         SCAN_TYPE="SYN scan"
     else
