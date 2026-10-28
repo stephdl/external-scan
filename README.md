@@ -173,9 +173,10 @@ results/2026-11-01/
   scan.log                        what ran and when, tool errors
   203.0.113.10_firewall.example.com/
     REPORT.txt                    the report for this address
-    REPORT.pdf                    the same for the owner, when pdf_report is on
+    REPORT.pdf                    the report for the owner, when pdf_report is on
     report.json                   the data of REPORT.pdf
     nmap.txt  nmap.xml            full nmap output
+    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output
@@ -231,8 +232,16 @@ Results older than `keep_months` are deleted after each successful scan.
 
 Set `pdf_report on` in the config to also get a `REPORT.pdf` in English per
 address, to send to its owner. It says who ran the scan, from which machine,
-when it started and ended, what was tested and with which tool versions. Then it gives the findings to fix, the accepted risks, the open
-ports, the TLS and SSH details, and the SHA-256 of every raw result.
+when it started and ended, what was tested and with which tool versions. Then
+it gives what changed, the findings to fix, the accepted risks, the open
+ports, the TLS, SSH and web details, the CVEs by version, the notes and the
+SHA-256 of every raw result.
+
+The PDF adds no advice and no judgment of its own. Each finding keeps the
+message and the severity of the tool that found it. Findings with the same
+check and the exact same message share one line, with the places where they
+were seen. A check that did not complete says so, it never looks clean. The
+finding keys are only in `REPORT.txt`, for the accept lines.
 
 Add `operator` once and `authorization` under each target to print who scans
 and under which permission. Without them the PDF says they are not set.
@@ -240,7 +249,8 @@ and under which permission. Without them the PDF says they are not set.
 The PDF is rendered by [typst](https://typst.app), a single binary that
 `install.sh` fetches into `tools/`, with its own fonts. The template is
 `report.typ`. A PDF that fails is noted in `SUMMARY.txt` and `scan.log`, it
-never changes the status. To render it again by hand:
+never changes the status, and `report.json` is removed with it. To render it
+again by hand:
 
 ```
 tools/typst/typst compile --root / --ignore-system-fonts \
