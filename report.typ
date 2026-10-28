@@ -103,13 +103,54 @@
   match: "Match",
   no-match: "no match",
   vulners: "Known vulnerabilities by version",
-  vulners-intro: "CVEs matched on the version number the service announces. Linux distributions often fix them without changing that number. They do not change the status.",
-  total: "CVEs",
+  vulners-all: "Known vulnerabilities by version, every entry",
+  vulners-intro: "Entries that the nmap vulners script lists for the version the service announces, as it gives them. The installed package was not checked. They do not change the status.",
+  vulners-summary-intro: "Count per port of the entries the nmap vulners script lists for the version the service announces. The installed package was not checked. They do not change the status. Every entry is in the technical annex.",
+  vid: "ID",
+  vtype: "Type",
+  cvss: "CVSS",
+  exploit: "Exploit known to vulners",
+  san: "Also valid for:",
+  not-open: "Ports not open",
+  not-open-value: "ports, state",
+  why-not-open: "reason",
+  udp-hidden: "For UDP, nmap reports a port that does not answer as open|filtered: it cannot tell closed from open. Only the UDP ports that answered are in the open ports list.",
+  reverse-dns: "Reverse DNS",
+  identified: "Identified",
+  method-probed: "probed",
+  method-table: "guessed from the port number",
+  confidence: "confidence",
+  filter-note: "testssl results are shown here when testssl rates them HIGH or CRITICAL. Its LOW and MEDIUM results are in the technical annex, and its results per cipher suite only in the raw files.",
+  annex-part: "Technical annex",
+  annex-part-intro: "The rest of the data of this scan, as the tools gave it. Two kinds of testssl results are not in this PDF: the ones testssl rates INFO or OK, apart from the attacks tested below, and its results per cipher suite. They are in the raw files of the target folder, listed with their SHA-256 at the end of this annex.",
+  annex-kept: "The raw files stay on the scanning machine for",
+  annex-kept-unit: "months after the scan.",
+  attacks: "Known TLS attacks tested",
+  attacks-intro: "Each attack testssl tested, with its result. One line per result, with the places where it was seen.",
+  lower: "Lower severity results",
+  lower-intro: "testssl results rated LOW or MEDIUM, except the results per cipher suite.",
+  skipped: "Tests that could not run",
+  skipped-intro: "testssl warnings: these tests did not run, so their result is unknown.",
+  certs: "Certificates",
+  certs-intro: "One line per certificate, as testssl read it, with the places where it was presented.",
+  issuer: "Issuer",
+  key: "Key",
+  signature: "Signature",
+  valid-from: "Valid from",
+  fingerprint: "SHA-256 fingerprint",
+  result: "Result",
+  check-id: "Test",
+  where: "Where",
+  ssh-details: "Algorithms and host key",
+  host-key: "Host key",
+  ssh-notes: "Notes from ssh-audit",
+  web-runs: "What nuclei ran",
+  total: "Entries",
   high: "Score 7.0 or more",
   highest: "Highest score",
   notes: "Notes",
   notes-intro: "Checks that were skipped or could not finish.",
-  annex: "Annex: raw results",
+  annex: "Raw results",
   annex-intro: "Every raw result of this scan is kept on the scanning machine. Their SHA-256 fingerprints prove that they were not changed after the report.",
   file: "File",
   cat-tls: "TLS settings",
@@ -135,6 +176,9 @@
 
 #let or-default(value, fallback) = if value == none or value == "" { fallback } else { value }
 #let mono(value) = text(font: "DejaVu Sans Mono", size: 7.5pt, value.replace("/", "/\u{200B}"))
+#let place-list(g) = g.where.join(", ")
+// Brackets an IPv6 address like the rest of the report, so the port stays apart.
+#let place(name, port) = if name.contains(":") { "[" + name + "]:" + port } else { name + ":" + port }
 #let empty-line = text(fill: muted, style: "italic", t("empty"))
 #let intro(body) = par(text(fill: muted, size: 9.5pt, body))
 #let pill(label, color) = box(
@@ -288,23 +332,12 @@
     data.checks.map(c => [#c.name:#c.port (#c.mode)]).join(linebreak())
   }),
   (t("web-scan"), if data.web_ran == "1" { t("on") } else { t("off") }),
+  (t("not-open"), if data.nmap.not_open.len() == 0 { t("empty") } else {
+    data.nmap.not_open.map(n => [#n.count #n.proto #t("not-open-value") #n.state, #t("why-not-open") #n.reason]).join(linebreak())
+  }),
+  (t("reverse-dns"), if data.nmap.hostnames.len() == 0 { t("empty") } else { data.nmap.hostnames.join(linebreak()) }),
 ))
-== #t("how")
-#key-values((
-  (t("scan-type"), [#data.scan_type \ #mono("nmap " + data.nmap_args)]),
-  (t("tools"), data.versions.map(v => [#v.tool #or-default(v.version, t("unknown"))]).join(linebreak())),
-))
-#v(0.4em)
-*#t("steps")*
-#if data.nmap_done != "1" { enum(t("step-nmap")) } else {
-  enum(
-    t("step-nmap"),
-    t("step-tls"),
-    t("step-ssh"),
-    ..if data.web_ran == "1" { (t("step-web"),) },
-    t("step-compare"),
-  )
-}
+#if data.udp_done == "1" { intro(t("udp-hidden")) }
 #block(fill: header-fill, inset: 9pt, radius: 2pt, width: 100%, text(size: 9pt, t("limits")))
 
 = #t("changes") #if data.previous != "" [#t("changes-since") #data.previous]
@@ -315,6 +348,7 @@
 
 = #t("open-findings")
 #intro(t("open-findings-intro"))
+#intro(t("filter-note"))
 #data-table(
   (30%, 1fr),
   (t("check"), t("detail")),
@@ -326,7 +360,7 @@
       [
         #if g.severity in severity-colors { pill(g.severity, severity-colors.at(g.severity)) } #g.message
         #if g.where.len() > 0 [
-          \ #text(size: 8pt, fill: muted)[#t("seen-on") #g.where.join(", ")]
+          \ #text(size: 8pt, fill: muted)[#t("seen-on") #g.where.zip(g.services).map(((w, s)) => if s == "" { w } else { w + " (" + s + ")" }).join(", ")]
         ]
       ],
     )),
@@ -343,12 +377,15 @@
 = #t("ports")
 #intro(t("ports-intro"))
 #data-table(
-  (auto, auto, 1fr),
-  (t("port"), t("service"), t("detail")),
+  (auto, auto, 1fr, auto),
+  (t("port"), t("service"), t("detail"), t("identified")),
   data.ports.map(p => (
     [#mono(p.port) #if p.sensitive { pill(t("sensitive"), status-colors.ATTENTION) }],
     p.service,
-    if p.detail == "-" { "" } else { p.detail },
+    [#if p.detail != "-" [#p.detail] #if p.cpe.len() > 0 [\ #text(size: 7pt, fill: muted, p.cpe.join(", "))]],
+    text(size: 7.5pt, fill: muted, if p.method == "table" { t("method-table") } else if p.method == "" { "" } else {
+      t("method-probed") + ", " + t("confidence") + " " + p.conf + "/10"
+    }),
   )),
 )
 
@@ -358,10 +395,10 @@
   (1fr, auto, auto, 1.1fr, auto),
   (t("name"), t("grade"), t("protocols"), t("certificate"), t("expires")),
   data.tls.map(e => (
-    [#e.name:#e.port #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
+    [#place(e.name, e.port) #if e.service != "" [\ #text(size: 7.5pt, fill: muted, e.service)] #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
     text(weight: "bold", fill: tool-color(e.grade_severity), e.grade),
     e.protocols.join(", "),
-    [#e.subject #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
+    [#e.subject #if e.san != "" [\ #text(size: 7.5pt, fill: muted)[#t("san") #e.san]] #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
     if e.expires == "" { "" } else {
       [#e.expires.slice(0, calc.min(10, e.expires.len())) \ #text(size: 7.5pt, fill: if type(e.days) == int and e.days < int(data.cert_warn_days) {
         status-colors.ERROR
@@ -370,6 +407,15 @@
   )),
 )
 
+#if data.tls_details.skipped.len() > 0 [
+  == #t("skipped")
+  #intro(t("skipped-intro"))
+  #data-table(
+    (auto, 1fr, 1fr),
+    (t("check-id"), t("result"), t("where")),
+    data.tls_details.skipped.map(g => (mono(g.id), [#g.severity #g.finding], text(size: 7.5pt, fill: muted, place-list(g)))),
+  )
+]
 = #t("ssh")
 #intro(t("ssh-intro"))
 #data-table(
@@ -387,7 +433,6 @@
     )
   }),
 )
-
 #if data.web_ran == "1" or data.web.len() > 0 [
   = #t("web")
   #intro(t("web-intro"))
@@ -396,15 +441,15 @@
     (t("site"), t("severity"), t("match")),
     data.web.map(s => {
       let rows = s.matches.map(m => (
-        [#s.name:#s.port],
+        [#place(s.name, s.port)],
         if m.severity in severity-colors { pill(m.severity, severity-colors.at(m.severity)) } else { m.severity },
         [#m.name \ #mono(m.url)],
       ))
       // A site that stopped answering may have more matches than listed, so it never reads as clean.
       if not s.completed {
-        rows.push(([#s.name:#s.port], "", pill(t("not-completed"), status-colors.ERROR)))
+        rows.push(([#place(s.name, s.port)], "", pill(t("not-completed"), status-colors.ERROR)))
       } else if rows.len() == 0 {
-        rows.push(([#s.name:#s.port], "", text(fill: muted, t("no-match"))))
+        rows.push(([#place(s.name, s.port)], "", text(fill: muted, t("no-match"))))
       }
       rows
     }).flatten().chunks(3),
@@ -412,11 +457,11 @@
 ]
 
 = #t("vulners")
-#intro(t("vulners-intro"))
+#intro(t("vulners-summary-intro"))
 #data-table(
   (auto, auto, auto, 1fr),
   (t("port"), t("total"), t("high"), t("highest")),
-  data.vulners.map(v => (mono(v.port), str(v.total), str(v.high), v.max)),
+  data.vulners_summary.map(v => (mono(v.port), str(v.total), str(v.high), v.max)),
 )
 
 = #t("notes")
@@ -427,7 +472,88 @@
 }
 
 #pagebreak()
-#heading(numbering: none, t("annex"))
+#heading(numbering: none, t("annex-part"))
+#intro[#t("annex-part-intro") #if data.keep_months != "" [#t("annex-kept") #data.keep_months #t("annex-kept-unit")]]
+#counter(heading).update(0)
+#set heading(numbering: "A.1.")
+
+= #t("how")
+#key-values((
+  (t("scan-type"), [#data.scan_type \ #mono("nmap " + data.nmap_args)]),
+  (t("tools"), data.versions.map(v => [#v.tool #or-default(v.version, t("unknown"))]).join(linebreak())),
+))
+#v(0.4em)
+*#t("steps")*
+#if data.nmap_done != "1" { enum(t("step-nmap")) } else {
+  enum(
+    t("step-nmap"),
+    t("step-tls"),
+    t("step-ssh"),
+    ..if data.web_ran == "1" { (t("step-web"),) },
+    t("step-compare"),
+  )
+}
+
+= #t("attacks")
+#intro(t("attacks-intro"))
+#data-table(
+  (auto, 1fr, 1fr),
+  (t("check-id"), t("result"), t("where")),
+  data.tls_details.attacks.map(g => (
+    mono(g.id),
+    [#if g.severity in severity-colors { pill(g.severity, severity-colors.at(g.severity)) } else { g.severity } #g.finding],
+    text(size: 7.5pt, fill: muted, place-list(g)),
+  )),
+)
+= #t("lower")
+#intro(t("lower-intro"))
+#data-table(
+  (auto, 1fr, 1fr),
+  (t("check-id"), t("result"), t("where")),
+  data.tls_details.lower.map(g => (
+    mono(g.id),
+    [#pill(g.severity, severity-colors.at(g.severity, default: ink)) #g.finding],
+    text(size: 7.5pt, fill: muted, place-list(g)),
+  )),
+)
+
+= #t("certs")
+#intro(t("certs-intro"))
+#data-table(
+  (1fr, 1fr, 1fr, 1fr),
+  (t("name"), t("issuer"), t("key"), t("fingerprint")),
+  data.tls_details.certs.map(c => (
+    [#c.at("cert_commonName", default: "") \ #text(size: 7.5pt, fill: muted, c.where.join(", "))],
+    [#c.at("cert_caIssuers", default: "") \ #text(size: 7.5pt, fill: muted)[#t("valid-from") #c.at("cert_notBefore", default: "")]],
+    [#c.at("cert_keySize", default: "") \ #text(size: 7.5pt, fill: muted, c.at("cert_signatureAlgorithm", default: ""))],
+    // Breaks every 16 hex digits so the fingerprint fits the column.
+    mono(c.at("cert_fingerprintSHA256", default: "").clusters().chunks(16).map(x => x.join()).join("\u{200B}")),
+  )),
+)
+
+#for s in data.ssh.filter(s => s.completed) [
+  = #t("ssh-details") (#s.port)
+  #key-values((
+    (t("host-key"), s.fingerprints.map(f => mono(f)).join(linebreak())),
+    ..("kex", "key", "enc", "mac").map(k => (k, text(size: 8pt, s.algorithms.at(k).join(", ")))),
+    ..if s.notes.len() > 0 { ((t("ssh-notes"), text(size: 8pt, s.notes.join(linebreak()))),) },
+  ))
+]
+
+#if data.web_runs.len() > 0 [
+    = #t("web-runs")
+    #key-values(data.web_runs.map(r => (r.site, text(size: 8pt, r.lines.join(linebreak())))))
+]
+
+= #t("vulners-all")
+#intro(t("vulners-intro"))
+#data-table(
+  (auto, auto, auto, auto, 1fr),
+  (t("port"), t("vid"), t("vtype"), t("cvss"), t("exploit")),
+  data.vulners.map(v => (mono(v.port), mono(v.id), v.type, v.cvss, v.exploit)),
+)
+
+= #t("annex")
 #intro(t("annex-intro"))
 #{
   set text(size: 7.5pt)
