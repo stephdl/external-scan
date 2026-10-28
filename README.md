@@ -173,9 +173,10 @@ results/2026-11-01/
   scan.log                        what ran and when, tool errors
   203.0.113.10_firewall.example.com/
     REPORT.txt                    the report for this address
-    REPORT.pdf                    the same for the owner, when pdf_report is on
-    report.json                   the data of REPORT.pdf
+    REPORT.pdf                    the report for the owner, when pdf_report is on
+    report.json                   the data of REPORT.pdf, when pdf_report is on
     nmap.txt  nmap.xml            full nmap output
+    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, unless udp_ports is none
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output
@@ -231,8 +232,22 @@ Results older than `keep_months` are deleted after each successful scan.
 
 Set `pdf_report on` in the config to also get a `REPORT.pdf` in English per
 address, to send to its owner. It says who ran the scan, from which machine,
-when it started and ended, what was tested and with which tool versions. Then it gives the findings to fix, the accepted risks, the open
-ports, the TLS and SSH details, and the SHA-256 of every raw result.
+when it started and ended, what was tested and with which tool versions. Then
+it gives what changed, the findings to fix, the accepted risks, the open
+ports, the TLS, SSH and web details, the CVEs by version on TCP ports like
+`REPORT.txt`, and the notes. An annex gives the SHA-256 of every file of the
+target folder, except `report.json` and `REPORT.pdf`.
+
+The PDF adds no advice and no judgment of its own. Messages come from the
+tools, and from the script for its own checks (DNS, sensitive ports, SSH
+login, certificate expiry, failed checks). The severity shown is the one
+testssl and nuclei give. An expired acceptance is said next to the message.
+In each section, findings with the same check and the exact same message
+share one line, with the places where they were seen. The check is the test
+name for testssl and nuclei, the port and algorithm type for ssh-audit, and
+the finding key for the others. A check that did not complete is a finding of
+the "Test not completed" category, and the TLS, SSH and web tables mark its
+row.
 
 Add `operator` once and `authorization` under each target to print who scans
 and under which permission. Without them the PDF says they are not set.
