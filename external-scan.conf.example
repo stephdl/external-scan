@@ -33,9 +33,14 @@ keep_months 12
 #   scanned. UDP is limited to a list because a full UDP scan takes about
 #   18 hours. "none" disables UDP. UDP only runs when the scan is started by
 #   systemd, because it needs the CAP_NET_RAW capability.
-#   Default: 53,69,123,161,443,500,1194,1900,3478,4500,5060,51820
-#   (DNS, TFTP, NTP, SNMP, QUIC, IPsec, OpenVPN, SSDP, TURN, IPsec NAT-T,
-#   SIP, WireGuard)
+#   Default: 53,69,111,123,137,161,389,443,500,623,1194,1434,1701,1719,1812,
+#   1900,2427,3389,3478,4500,4569,5060,5160,5349,5353,10001,11211,51820
+#   Telephony: SIP (5060, 5160), IAX2 (4569), H.323 (1719), MGCP (2427),
+#   STUN/TURN (3478, 5349). VPN: IPsec (500, 4500), OpenVPN (1194), L2TP
+#   (1701), WireGuard (51820). Others: DNS, TFTP, rpcbind, NTP, NetBIOS,
+#   SNMP, CLDAP, QUIC, IPMI, MS-SQL browser, RADIUS, SSDP, RDP, mDNS,
+#   Ubiquiti discovery, memcached. Many of them can be abused for traffic
+#   amplification when they answer from the Internet.
 # udp_ports 53,123,161,500,4500,51820
 #
 # sensitive_ports <port,port,...> | none
