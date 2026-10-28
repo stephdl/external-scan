@@ -126,7 +126,6 @@ def ssh_audit(path):
         print(f"CVE\t{key_part(cve.get('name', '?'))}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
 
 
-
 COMMANDS = {
     "check-ip": check_ip,
     "resolve": resolve,

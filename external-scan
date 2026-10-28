@@ -316,28 +316,29 @@ run_ssh_audit() {
 # The OpenSSH client is used because the nmap of Rocky and RHEL is built without libssh2,
 # so its ssh-auth-methods script never runs there.
 check_ssh_auth() {
-    local ports=$1 port out rc methods
+    local ports=$1 port out methods reason
     for port in ${ports//,/ }; do
         log "[$ip] ssh login methods on port $port"
-        out=$(timeout 30 ssh -F /dev/null -o BatchMode=yes -o PreferredAuthentications=none \
+        # -N runs nothing on the target. Old algorithms are allowed for this probe only, since
+        # legacy servers are the ones most likely to accept passwords.
+        out=$(timeout 25 ssh -v -N -F /dev/null -o BatchMode=yes -o PreferredAuthentications=none \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 -o LogLevel=ERROR -p "$port" "nobody@$ip" true </dev/null 2>&1)
-        rc=$?
-        # Exit 0 means "true" ran on the server: it opened a session without any login.
-        if (( rc == 0 )); then
+            -o ConnectTimeout=15 -o KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group1-sha1 \
+            -o HostKeyAlgorithms=+ssh-rsa -p "$port" "nobody@$ip" </dev/null 2>&1)
+        if grep -q '^Authenticated to .* using "none"' <<<"$out"; then
             tested+=" sshpw/$port "
             add_finding "sshpw/$port" "SSH on port $port opened a session without any login. Require a key."
-            continue
-        fi
-        if [[ ! $out =~ Permission\ denied\ \(([^\)]*)\) ]]; then
-            add_finding "failed/sshpw/$port" "Could not list the SSH login methods on port $port: ${out:-no answer}"
+        elif [[ $out =~ Permission\ denied\ \(([^\)]+)\) ]]; then
+            methods=${BASH_REMATCH[1]//,/ }
+            tested+=" sshpw/$port "
+            if [[ " $methods " == *" password "* || " $methods " == *" keyboard-interactive "* ]]; then
+                add_finding "sshpw/$port" "SSH on port $port accepts password login ($methods). Prefer keys only."
+            fi
+        else
+            # One line only: findings.tsv holds one finding per line.
+            reason=$(grep -v '^debug' <<<"$out" | tail -1 | tr -d '\r' | tr '\t' ' ')
+            add_finding "failed/sshpw/$port" "Could not list the SSH login methods on port $port: ${reason:-no answer}"
             failures=1
-            continue
-        fi
-        methods=${BASH_REMATCH[1]//,/ }
-        tested+=" sshpw/$port "
-        if [[ " $methods " == *" password "* || " $methods " == *" keyboard-interactive "* ]]; then
-            add_finding "sshpw/$port" "SSH on port $port accepts password login ($methods). Prefer keys only."
         fi
     done
 }
