@@ -305,7 +305,7 @@ sudo -u external-scan /var/lib/external-scan/external-scan \
   vulners.com. Its matches use the version string only, so backported distro
   fixes show up as false positives. They do not change the status.
 - All TCP ports are scanned, but only a short list of UDP ports (DNS, NTP,
-  SNMP, VPN, QUIC, SIP...), set by `udp_ports`. A full UDP scan would take
+  SNMP, VPN, QUIC, telephony...), set by `udp_ports`. A full UDP scan would take
   about 18 hours. The UDP scan needs the raw socket right, so it only runs
   through systemd. Run by hand, the report says it was skipped.
 
