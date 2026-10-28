@@ -5,6 +5,9 @@ set -euo pipefail
 
 TESTSSL_REF=v3.2.4
 SSH_AUDIT_REF=v3.3.0
+NUCLEI_VERSION=3.11.1
+NUCLEI_SHA256_amd64=ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6
+NUCLEI_SHA256_arm64=8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07
 SCAN_USER=external-scan
 INSTALL_DIR=/var/lib/external-scan
 BASE=$(dirname "$(readlink -f "$0")")
@@ -40,6 +43,31 @@ git_checkout() {
     git -C "$dir" -c advice.detachedHead=false checkout -q "$ref"
 }
 
+install_nuclei() {
+    local dir=$BASE/tools/nuclei arch sum zip
+    case $(uname -m) in
+        x86_64) arch=amd64 sum=$NUCLEI_SHA256_amd64 ;;
+        aarch64) arch=arm64 sum=$NUCLEI_SHA256_arm64 ;;
+        *) die "no nuclei build for $(uname -m)" ;;
+    esac
+    if [[ -x $dir/nuclei && $(cat "$dir/VERSION" 2>/dev/null) == "$NUCLEI_VERSION" ]]; then
+        say "nuclei $NUCLEI_VERSION already installed"
+        return
+    fi
+    say "fetching nuclei $NUCLEI_VERSION"
+    zip=$(mktemp)
+    curl -fsSL -o "$zip" \
+        "https://github.com/projectdiscovery/nuclei/releases/download/v$NUCLEI_VERSION/nuclei_${NUCLEI_VERSION}_linux_$arch.zip"
+    echo "$sum  $zip" | sha256sum -c --quiet - || { rm -f "$zip"; die "nuclei download does not match its checksum"; }
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    # python3 is already installed, so no need for unzip.
+    python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("nuclei", sys.argv[2])' "$zip" "$dir"
+    rm -f "$zip"
+    chmod 755 "$dir/nuclei"
+    echo "$NUCLEI_VERSION" >"$dir/VERSION"
+}
+
 say "installing packages"
 install_packages
 
@@ -58,12 +86,16 @@ say "fetching testssl.sh $TESTSSL_REF and ssh-audit $SSH_AUDIT_REF"
 mkdir -p "$BASE/tools"
 git_checkout https://github.com/testssl/testssl.sh.git "$BASE/tools/testssl.sh" "$TESTSSL_REF"
 git_checkout https://github.com/jtesta/ssh-audit.git "$BASE/tools/ssh-audit" "$SSH_AUDIT_REF"
+install_nuclei
 
 say "setting permissions"
-# Only results/ is writable by the scan user, so a compromised tool cannot change the code or the targets.
-find "$BASE" -path "$BASE/results" -prune -o -exec chown root:root {} +
+# Only results/ and cache/ are writable by the scan user, so a compromised tool cannot change the code or the targets.
+find "$BASE" \( -path "$BASE/results" -o -path "$BASE/cache" \) -prune -o -exec chown root:root {} +
 chmod 755 "$BASE" "$BASE/external-scan" "$BASE/parse.py"
 install -d -o "$SCAN_USER" -g "$SCAN_USER" -m 750 "$BASE/results"
+# nuclei templates, downloaded again at each scan.
+install -d -o "$SCAN_USER" -g "$SCAN_USER" -m 750 "$BASE/cache"
+chown -R "$SCAN_USER:$SCAN_USER" "$BASE/cache"
 if [[ -e $BASE/external-scan.conf ]]; then
     say "keeping existing external-scan.conf"
 else
