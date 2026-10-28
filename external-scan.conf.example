@@ -1,34 +1,105 @@
-# external-scan configuration.
-# Only scan addresses you have written permission to scan.
-# Lines starting with # are comments.
-
-# Alert when a certificate expires in less than this many days.
-cert_warn_days 30
-
-# Delete results older than this many months.
-keep_months 12
-
-# Optional Uptime Kuma push monitor. Leave commented to disable.
-# kuma_url https://kuma.example.com/api/push/XXXXXXXXXX
-
-# One block per public IP address: "target <ip> <free label>".
-# Every open TCP port is scanned. Ports that nmap sees as SSL are tested
-# with testssl.sh and ports that run SSH are tested with ssh-audit.
+# external-scan configuration file
 #
-# Indented lines test a name on that IP with testssl.sh: "<mode> <fqdn> <port>".
-# Use them for sites behind a reverse proxy, where the certificate depends
-# on the name. The test always connects to the target IP, even if DNS says
-# something else.
-# Modes: https, tls (TLS from the first byte), smtp, imap, pop3 (STARTTLS).
+# Copy this file to external-scan.conf in the same directory and edit it.
+# external-scan.conf is ignored by git: it holds your real targets.
+#
+# LEGAL: only list IP addresses you have WRITTEN permission to scan.
+# Ask the owner to whitelist the IP of the scanning machine in CrowdSec,
+# their IDS, fail2ban or similar, or the scan gets blocked halfway.
+#
+# Syntax rules
+# - One setting per line. Fields are separated by spaces.
+# - "#" starts a comment, until the end of the line.
+# - Empty lines are ignored.
+# - Any line the script does not understand stops the scan with an error
+#   that gives the line number. Nothing is guessed.
+#
+# ---------------------------------------------------------------------------
+# GLOBAL SETTINGS (optional, at the start of a line, no indentation)
+# ---------------------------------------------------------------------------
+#
+# cert_warn_days <days>
+#   The report flags a certificate that expires in fewer days than this.
+#   Default: 30
+cert_warn_days 30
+#
+# keep_months <months>
+#   Result folders older than this are deleted after each successful scan.
+#   Default: 12
+keep_months 12
+#
+# udp_ports <port,port,...> | none
+#   UDP ports to scan on every target. All TCP ports (1 to 65535) are always
+#   scanned. UDP is limited to a list because a full UDP scan takes about
+#   18 hours. "none" disables UDP. UDP only runs when the scan is started by
+#   systemd, because it needs the CAP_NET_RAW capability.
+#   Default: 53,69,123,161,443,500,1194,1900,3478,4500,5060,51820
+#   (DNS, TFTP, NTP, SNMP, QUIC, IPsec, OpenVPN, SSDP, TURN, IPsec NAT-T,
+#   SIP, WireGuard)
+# udp_ports 53,123,161,500,4500,51820
+#
+# kuma_url <url>
+#   Optional. URL of an Uptime Kuma "Push" monitor. After each scan the script
+#   sends "up" when there is no error and no new open port, "down" otherwise.
+#   The URL contains a secret token: it is never written to the logs.
+# kuma_url https://kuma.example.com/api/push/XXXXXXXXXX
+#
+# ---------------------------------------------------------------------------
+# TARGETS (one block per public IP address)
+# ---------------------------------------------------------------------------
+#
+# target <ip> <label>
+#   <ip>     ONE IPv4 or IPv6 address. Ranges (10.0.0.0/24, 10.0.0.1-20) and
+#            host names are refused. This is the ONLY address the scan ever
+#            connects to for this block: nmap, ssh-audit and testssl.sh all
+#            use it.
+#   <label>  Free text, spaces allowed. Used only in the report and in the
+#            name of the result folder. Never used to connect.
+#
+#   With a "target" line alone, the scan does all of this on <ip>:
+#   - nmap: every TCP port, the udp_ports list, service and version detection,
+#     known CVEs by version (vulners).
+#   - testssl.sh on every open port that nmap sees as SSL/TLS (for example
+#     443, 465, 993, 995), directly on the IP, without a name.
+#   - testssl.sh with STARTTLS on every open SMTP, IMAP or POP3 port (for
+#     example 25, 587, 143, 110), directly on the IP, without a name.
+#   - ssh-audit on every open port where nmap sees SSH.
+#
+#   <mode> <fqdn> <port>      (indented line, under a "target" line)
+#   Optional. Tests one name with testssl.sh on the IP of the block above.
+#   Use it for every site behind a reverse proxy (Traefik, nginx, HAProxy...):
+#   the proxy picks the certificate from the name, so without these lines
+#   you only see its default certificate.
+#   <mode>   How testssl.sh talks to the port:
+#              https  HTTPS, TLS from the first byte (web sites)
+#              tls    TLS from the first byte, any protocol (465, 993, 995)
+#              smtp   plain SMTP, then STARTTLS (25, 587)
+#              imap   plain IMAP, then STARTTLS (143)
+#              pop3   plain POP3, then STARTTLS (110)
+#   <fqdn>   The name to present (SNI). It does NOT choose where to connect:
+#            the connection always goes to <ip>. If the name resolves to
+#            another address in DNS, the report says so.
+#   <port>   Required. A TCP port. If nmap does not see it open, the line is
+#            skipped and the report says so.
+#   A port tested by name is not tested a second time without a name.
+#
+# ---------------------------------------------------------------------------
+# EXAMPLES (documentation addresses, remove the leading "# " to use)
+# ---------------------------------------------------------------------------
+#
+# A firewall that forwards web and mail to a server behind it:
 #
 # target 203.0.113.10 firewall.example.com
-#   https www.example.com   443
-#   https cloud.example.com 443
-#   smtp  mail.example.com  25
-#   smtp  mail.example.com  587
-#   tls   mail.example.com  465
-#   imap  mail.example.com  143
-#   tls   mail.example.com  993
-#   tls   mail.example.com  995
+#   https www.example.com   443   # web site behind the reverse proxy
+#   https cloud.example.com 443   # second site on the same proxy
+#   smtp  mail.example.com  25    # incoming mail, STARTTLS
+#   smtp  mail.example.com  587   # mail submission, STARTTLS
+#   tls   mail.example.com  465   # mail submission, TLS from the start
+#   imap  mail.example.com  143   # IMAP, STARTTLS
+#   tls   mail.example.com  993   # IMAPS
+#   pop3  mail.example.com  110   # POP3, STARTTLS
+#   tls   mail.example.com  995   # POP3S
 #
-# target 198.51.100.20 home
+# A second address with no name to test: the defaults are enough.
+#
+# target 198.51.100.20 home office

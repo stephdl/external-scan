@@ -40,7 +40,7 @@ again. It does the following:
 - creates the `external-scan` system user,
 - fetches pinned versions of testssl.sh and ssh-audit into `tools/`,
 - creates `external-scan.conf` from the example if it does not exist,
-- links the systemd service and timer.
+- copies the systemd service and timer to `/etc/systemd/system`.
 
 It does not enable the timer.
 
@@ -61,13 +61,36 @@ target 203.0.113.10 firewall.example.com
   tls   mail.example.com  993
 ```
 
-Every open port is scanned anyway. The indented lines are for testssl.sh. A
-reverse proxy picks the certificate from the name, so without them you only
+Every open port is scanned anyway. Without any indented line, testssl.sh
+still tests each port that nmap sees as SSL, and each SMTP, IMAP or POP3 port
+through STARTTLS, on the bare IP. The indented lines add a name to the test.
+A reverse proxy picks the certificate from the name, so without them you only
 see its default certificate.
 
 The config file never goes to git.
 
+### Find the names on a NethServer 8 cluster
+
+Each Traefik instance holds its own routes. Run this on the leader node for
+every Traefik instance of the cluster (`traefik1`, `traefik2`, ...):
+
+```
+api-cli run module/traefik1/list-routes --data '{"expand_list": true}' | jq -r '.[] | select(.host) | .host' | sort -u
+```
+
+Routes without a host, like `cluster-admin`, are routed by path and only
+answer with the default certificate, so they are not listed. The mail server
+name is not a route. Look for it in the MX record or in the certificates:
+
+```
+api-cli run module/traefik1/list-certificates --data '{"expand_list": true}'
+```
+
 ## Run
+
+All commands below run as root. Root only asks systemd to start the service:
+the scan itself runs as the `external-scan` user. Started directly as root,
+the script refuses to run.
 
 Run a scan by hand:
 
@@ -75,8 +98,24 @@ Run a scan by hand:
 systemctl start external-scan.service
 ```
 
-The command returns when the scan is over. A scan of all ports can take an
-hour or more per address.
+The command returns when the scan is over. A scan can take from a few minutes
+to an hour or more per address. To get the prompt back at once and follow the
+scan:
+
+```
+systemctl start --no-block external-scan.service
+journalctl -u external-scan -f
+```
+
+The journal only shows the start and the end. The details go to
+`results/<date>/scan.log`. Then read the summary:
+
+```
+cat /var/lib/external-scan/results/$(date +%F)/SUMMARY.txt
+```
+
+A change in `external-scan.conf` needs no restart or reinstall. The next
+scan reads it.
 
 To scan every month on the 1st, at a random time between 03:00 and 04:00, run
 this once after a first good manual scan:
@@ -102,7 +141,7 @@ results/2026-11-01/
     nmap.txt  nmap.xml            full nmap output
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
-    ssh-audit_22.txt              full ssh-audit output
+    ssh-audit_22.json             full ssh-audit output
 ```
 
 Each report has a status:
@@ -143,13 +182,17 @@ sudo -u external-scan /var/lib/external-scan/external-scan \
 - The nmap vulners script sends the software versions it finds to
   vulners.com. Its matches use the version string only, so backported distro
   fixes show up as false positives. They do not change the status.
-- Only TCP is scanned. A full UDP scan would take hours.
+- All TCP ports are scanned, but only a short list of UDP ports (DNS, NTP,
+  SNMP, VPN, QUIC, SIP...), set by `udp_ports`. A full UDP scan would take
+  about 18 hours. The UDP scan needs the raw socket right, so it only runs
+  through systemd. Run by hand, the report says it was skipped.
 
 ## Uninstall
 
 ```
 systemctl disable --now external-scan.timer
-systemctl disable external-scan.service
+rm -f /etc/systemd/system/external-scan.service /etc/systemd/system/external-scan.timer
+systemctl daemon-reload
 rm -rf /var/lib/external-scan
 userdel external-scan
 ```
