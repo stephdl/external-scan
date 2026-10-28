@@ -262,8 +262,8 @@ update_nuclei_templates() {
         && [[ -d $NUCLEI_HOME/nuclei-templates/http ]]; then
         NUCLEI_NOTE="The nuclei templates update failed, the web scan used the templates of a previous run. See scan.log."
     fi
-    NUCLEI_TEMPLATES=$(grep -o '"nuclei-templates-version":"[^"]*"' \
-        "$NUCLEI_HOME/.config/nuclei/.templates-config.json" 2>/dev/null | cut -d'"' -f4)
+    NUCLEI_TEMPLATES=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["nuclei-templates-version"])' \
+        "$NUCLEI_HOME/.config/nuclei/.templates-config.json" 2>/dev/null)
 }
 
 has_net_raw() {
@@ -643,7 +643,7 @@ write_pdf() {
             --input data="$dir/report.json" \
             "$TEMPLATE" "$dir/REPORT.pdf" </dev/null >/dev/null 2>>"$LOG"; then
         log "[$ip] PDF report failed"
-        rm -f "$dir/REPORT.pdf"
+        rm -f "$dir/REPORT.pdf" "$dir/report.json"
         pdf_failed=1
     fi
 }

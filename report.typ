@@ -363,7 +363,7 @@
     e.protocols.join(", "),
     [#e.subject #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
     if e.expires == "" { "" } else {
-      [#e.expires.slice(0, 10) \ #text(size: 7.5pt, fill: if type(e.days) == int and e.days < int(data.cert_warn_days) {
+      [#e.expires.slice(0, calc.min(10, e.expires.len())) \ #text(size: 7.5pt, fill: if type(e.days) == int and e.days < int(data.cert_warn_days) {
         status-colors.ERROR
       } else { muted }, [#e.days #t("days-left")])]
     },

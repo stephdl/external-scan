@@ -289,10 +289,7 @@ def checksums(path):
 
 
 def group_findings(findings):
-    """Merges findings with the same check and the same tool message, and lists where each one was seen.
-
-    Only identical messages are merged: the text of the tools is kept as is, nothing is reworded.
-    """
+    """Merges findings with the same check and the exact same tool message, and lists where each was seen."""
     groups = {}
     for finding in findings:
         check, where, message = finding["key"], "", finding["text"]
@@ -364,17 +361,26 @@ def report(path):
             "state": "open" if key in attention else "accepted",
         })
     data["groups"] = group_findings(data["findings"])
-    data["vulners"] = []
-    for name in ("nmap.xml", "nmap-udp.xml"):
-        try:
-            data["vulners"] += [{"port": port, "high": high, "max": f"{top:.1f}", "total": total}
-                                for port, high, top, total in vulners_rows(os.path.join(path, name))]
-        except (OSError, ValueError, ET.ParseError):
-            pass
+    # TCP only, like REPORT.txt.
+    try:
+        data["vulners"] = [{"port": port, "high": high, "max": f"{top:.1f}", "total": total}
+                           for port, high, top, total in vulners_rows(os.path.join(path, "nmap.xml"))]
+    except (OSError, ValueError, ET.ParseError):
+        data["vulners"] = []
     failed = {f["key"] for f in data["findings"] if f["category"] == "failed"}
     data["tls"] = tls_endpoints(path, data.get("ip", ""), failed)
     data["ssh"] = ssh_servers(path)
     data["web"] = web_sites(path, failed)
+    # A check that failed before writing its output file still gets a "not completed" row.
+    for key in sorted(failed):
+        parts = key.split("/")
+        if len(parts) != 4 or parts[1] not in ("tls", "web"):
+            continue
+        table = data["tls"] if parts[1] == "tls" else data["web"]
+        if not any(row["name"] == parts[2] and row["port"] == parts[3] for row in table):
+            table.append({"name": parts[2], "port": parts[3], "completed": False, "matches": [], "protocols": [],
+                          "grade": "", "grade_severity": "", "subject": "", "trust": "", "trust_severity": "",
+                          "expires": "", "days": ""})
     data["files"] = checksums(path)
     # Bytes, so the output stays UTF-8 under the LC_ALL=C of the bash script.
     sys.stdout.buffer.write(json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"))
