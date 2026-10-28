@@ -617,6 +617,7 @@ report_data() {
     emit udp_done "$udp_done"
     emit sensitive_ports "$SENSITIVE_PORTS"
     emit cert_warn_days "$CERT_WARN_DAYS"
+    emit keep_months "$KEEP_MONTHS"
     emit nmap_done "$nmap_done"
     emit web_ran "$web_ran"
     emit operator "$OPERATOR"

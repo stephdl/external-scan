@@ -244,7 +244,10 @@ algorithms with the host key fingerprint and the notes of ssh-audit, what
 nuclei ran, the CVEs by version on TCP ports like `REPORT.txt`, and the
 SHA-256 of every file of the target folder, except `report.json` and
 `REPORT.pdf`. A section with nothing in it says "None.", so an empty result
-never looks like a check that did not run.
+never looks like a check that did not run. The annex also says what is not in
+the PDF: the testssl results rated INFO or OK apart from the attacks tested,
+and its results per cipher suite. They stay in the raw files, which are kept
+on the scanning machine for `keep_months` months.
 
 The PDF adds no advice and no judgment of its own, and cuts no text. Messages
 come from the tools, and from the script for its own checks (DNS, sensitive ports, SSH

@@ -103,15 +103,18 @@
   match: "Match",
   no-match: "no match",
   vulners: "Known vulnerabilities by version",
-  vulners-intro: "CVEs that the nmap vulners script lists for the version the service announces, as it gives them. The installed package was not checked. They do not change the status.",
-  cve: "CVE",
+  vulners-all: "Known vulnerabilities by version, every entry",
+  vulners-intro: "Entries that the nmap vulners script lists for the version the service announces, as it gives them. The installed package was not checked. They do not change the status.",
+  vulners-summary-intro: "Count per port of the entries the nmap vulners script lists for the version the service announces. The installed package was not checked. They do not change the status. Every entry is in the technical annex.",
+  vid: "ID",
+  vtype: "Type",
   cvss: "CVSS",
-  exploit: "Public exploit",
+  exploit: "Exploit known to vulners",
   san: "Also valid for:",
   not-open: "Ports not open",
   not-open-value: "ports, state",
   why-not-open: "reason",
-  udp-hidden: "UDP ports that did not answer are not listed: nmap cannot tell closed from open|filtered for them.",
+  udp-hidden: "For UDP, nmap reports a port that does not answer as open|filtered: it cannot tell closed from open. Only the UDP ports that answered are in the open ports list.",
   reverse-dns: "Reverse DNS",
   identified: "Identified",
   method-probed: "probed",
@@ -119,10 +122,11 @@
   confidence: "confidence",
   filter-note: "testssl results are shown here when testssl rates them HIGH or CRITICAL. Its LOW and MEDIUM results are in the technical annex, and its results per cipher suite only in the raw files.",
   annex-part: "Technical annex",
-  annex-part-intro: "The rest of the data of this scan, as the tools gave it. The report above leaves nothing out: every section it does not show is here.",
+  annex-part-intro: "The rest of the data of this scan, as the tools gave it. Two kinds of testssl results are not in this PDF: the ones testssl rates INFO or OK, apart from the attacks tested below, and its results per cipher suite. They are in the raw files of the target folder, listed with their SHA-256 at the end of this annex.",
+  annex-kept: "The raw files stay on the scanning machine for",
+  annex-kept-unit: "months after the scan.",
   attacks: "Known TLS attacks tested",
   attacks-intro: "Each attack testssl tested, with its result. One line per result, with the places where it was seen.",
-  everywhere: "all tested services",
   lower: "Lower severity results",
   lower-intro: "testssl results rated LOW or MEDIUM, except the results per cipher suite.",
   skipped: "Tests that could not run",
@@ -141,7 +145,7 @@
   host-key: "Host key",
   ssh-notes: "Notes from ssh-audit",
   web-runs: "What nuclei ran",
-  total: "CVEs",
+  total: "Entries",
   high: "Score 7.0 or more",
   highest: "Highest score",
   notes: "Notes",
@@ -172,7 +176,9 @@
 
 #let or-default(value, fallback) = if value == none or value == "" { fallback } else { value }
 #let mono(value) = text(font: "DejaVu Sans Mono", size: 7.5pt, value.replace("/", "/\u{200B}"))
-#let place-list(g) = if g.everywhere { t("everywhere") } else { g.where.join(", ") }
+#let place-list(g) = g.where.join(", ")
+// Brackets an IPv6 address like the rest of the report, so the port stays apart.
+#let place(name, port) = if name.contains(":") { "[" + name + "]:" + port } else { name + ":" + port }
 #let empty-line = text(fill: muted, style: "italic", t("empty"))
 #let intro(body) = par(text(fill: muted, size: 9.5pt, body))
 #let pill(label, color) = box(
@@ -331,7 +337,7 @@
   }),
   (t("reverse-dns"), if data.nmap.hostnames.len() == 0 { t("empty") } else { data.nmap.hostnames.join(linebreak()) }),
 ))
-#if data.udp_ports != "" { intro(t("udp-hidden")) }
+#if data.udp_done == "1" { intro(t("udp-hidden")) }
 #block(fill: header-fill, inset: 9pt, radius: 2pt, width: 100%, text(size: 9pt, t("limits")))
 
 = #t("changes") #if data.previous != "" [#t("changes-since") #data.previous]
@@ -389,7 +395,7 @@
   (1fr, auto, auto, 1.1fr, auto),
   (t("name"), t("grade"), t("protocols"), t("certificate"), t("expires")),
   data.tls.map(e => (
-    [#e.name:#e.port #if e.service != "" [\ #text(size: 7.5pt, fill: muted, e.service)] #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
+    [#place(e.name, e.port) #if e.service != "" [\ #text(size: 7.5pt, fill: muted, e.service)] #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
     text(weight: "bold", fill: tool-color(e.grade_severity), e.grade),
     e.protocols.join(", "),
     [#e.subject #if e.san != "" [\ #text(size: 7.5pt, fill: muted)[#t("san") #e.san]] #if e.trust != "" [\ #text(size: 7.5pt, fill: tool-color(e.trust_severity), e.trust)]],
@@ -435,20 +441,28 @@
     (t("site"), t("severity"), t("match")),
     data.web.map(s => {
       let rows = s.matches.map(m => (
-        [#s.name:#s.port],
+        [#place(s.name, s.port)],
         if m.severity in severity-colors { pill(m.severity, severity-colors.at(m.severity)) } else { m.severity },
         [#m.name \ #mono(m.url)],
       ))
       // A site that stopped answering may have more matches than listed, so it never reads as clean.
       if not s.completed {
-        rows.push(([#s.name:#s.port], "", pill(t("not-completed"), status-colors.ERROR)))
+        rows.push(([#place(s.name, s.port)], "", pill(t("not-completed"), status-colors.ERROR)))
       } else if rows.len() == 0 {
-        rows.push(([#s.name:#s.port], "", text(fill: muted, t("no-match"))))
+        rows.push(([#place(s.name, s.port)], "", text(fill: muted, t("no-match"))))
       }
       rows
     }).flatten().chunks(3),
   )
 ]
+
+= #t("vulners")
+#intro(t("vulners-summary-intro"))
+#data-table(
+  (auto, auto, auto, 1fr),
+  (t("port"), t("total"), t("high"), t("highest")),
+  data.vulners_summary.map(v => (mono(v.port), str(v.total), str(v.high), v.max)),
+)
 
 = #t("notes")
 #intro(t("notes-intro"))
@@ -459,7 +473,7 @@
 
 #pagebreak()
 #heading(numbering: none, t("annex-part"))
-#intro(t("annex-part-intro"))
+#intro[#t("annex-part-intro") #if data.keep_months != "" [#t("annex-kept") #data.keep_months #t("annex-kept-unit")]]
 #counter(heading).update(0)
 #set heading(numbering: "A.1.")
 
@@ -531,12 +545,12 @@
     #key-values(data.web_runs.map(r => (r.site, text(size: 8pt, r.lines.join(linebreak())))))
 ]
 
-= #t("vulners")
+= #t("vulners-all")
 #intro(t("vulners-intro"))
 #data-table(
-  (auto, auto, auto, 1fr),
-  (t("port"), t("cve"), t("cvss"), t("exploit")),
-  data.vulners.map(v => (mono(v.port), mono(v.id), v.cvss, v.exploit)),
+  (auto, auto, auto, auto, 1fr),
+  (t("port"), t("vid"), t("vtype"), t("cvss"), t("exploit")),
+  data.vulners.map(v => (mono(v.port), mono(v.id), v.type, v.cvss, v.exploit)),
 )
 
 = #t("annex")

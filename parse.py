@@ -102,16 +102,32 @@ def vulners_cves(path):
                     score = -1.0
                 rows.append({
                     "port": f"{port.get('portid')}/{port.get('protocol')}",
+                    "_port": int(port.get("portid", "0")),
                     "id": elems["id"],
                     "type": elems.get("type", ""),
                     "cvss": elems.get("cvss", ""),
                     "exploit": elems.get("is_exploit", ""),
                     "_score": score,
                 })
-    rows.sort(key=lambda row: (row["port"], -row["_score"], row["id"]))
+    rows.sort(key=lambda row: (row["_port"], row["port"], -row["_score"], row["id"]))
     for row in rows:
-        del row["_score"]
+        del row["_score"], row["_port"]
     return rows
+
+
+def vulners_summary(rows):
+    """One line per port: how many entries vulners gave, how many score 7.0 or more, and the highest score."""
+    ports = {}
+    for row in rows:
+        entry = ports.setdefault(row["port"], {"port": row["port"], "total": 0, "high": 0, "max": None})
+        entry["total"] += 1
+        try:
+            score = float(row["cvss"])
+        except ValueError:
+            continue
+        entry["high"] += score >= 7.0
+        entry["max"] = score if entry["max"] is None else max(entry["max"], score)
+    return [{**e, "max": "" if e["max"] is None else f"{e['max']:.1f}"} for e in ports.values()]
 
 
 def load_testssl(path):
@@ -318,32 +334,36 @@ def nmap_details(path):
     return details
 
 
-def group_rows(rows, total):
+def host_port(host, port):
+    """Same spelling as the bash script, so an IPv6 address and its port stay apart."""
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def group_rows(rows):
     """Merges testssl rows with the same id, severity and finding, and lists where each was seen."""
     groups = {}
     for where, item in rows:
-        key = (item["id"], item["severity"], item["finding"])
-        groups.setdefault(key, []).append(where)
-    return [{"id": i, "severity": s, "finding": f, "where": w, "everywhere": len(w) == total}
-            for (i, s, f), w in groups.items()]
+        places = groups.setdefault((item["id"], item["severity"], item["finding"]), [])
+        if where not in places:
+            places.append(where)
+    return [{"id": i, "severity": s, "finding": f, "where": w} for (i, s, f), w in groups.items()]
 
 
 def tls_details(path, ip):
     """testssl results the main TLS table leaves out: attacks tested, lower severities, certificates, skipped tests."""
     attacks, lower, skipped, certs = [], [], [], {}
     folder = os.path.join(path, "testssl")
-    endpoints = 0
     for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
         if not name.endswith(".json"):
             continue
         host, _, port = name[:-5].rpartition("_")
-        where = f"{ip if host == 'ip' else host}:{port}"
+        where = host_port(ip if host == "ip" else host, port)
         try:
             items = load_testssl(os.path.join(folder, name))
         except (OSError, ValueError):
             continue
-        endpoints += 1
-        cert = {}
+        # One entry per certificate the server presented: ids end with "<hostCert#1>", "<hostCert#2>"...
+        server_certs = {}
         for item in items:
             row = {"id": str(item.get("id", "")), "severity": str(item.get("severity", "")),
                    "finding": clean(item.get("finding", ""))}
@@ -355,15 +375,17 @@ def tls_details(path, ip):
             elif row["severity"] in ("LOW", "MEDIUM") and not base.startswith(("cipher-", "cipher_order-")):
                 lower.append((where, row))
             if base in CERT_FIELDS:
-                cert.setdefault(base, row["finding"])
-        if cert.get("cert_fingerprintSHA256"):
-            entry = certs.setdefault(cert["cert_fingerprintSHA256"], {**cert, "where": []})
-            entry["where"].append(where)
+                server_certs.setdefault(row["id"][len(base):].strip(), {}).setdefault(base, row["finding"])
+        for cert in server_certs.values():
+            if cert.get("cert_fingerprintSHA256"):
+                entry = certs.setdefault(cert["cert_fingerprintSHA256"], {**cert, "where": []})
+                if where not in entry["where"]:
+                    entry["where"].append(where)
     order = {name: index for index, name in enumerate(TLS_ATTACKS)}
-    attack_groups = group_rows(attacks, endpoints)
+    attack_groups = group_rows(attacks)
     attack_groups.sort(key=lambda g: (order.get(g["id"].split(" ")[0], 99), g["severity"] == "OK"))
-    return {"endpoints": endpoints, "attacks": attack_groups, "lower": group_rows(lower, endpoints),
-            "skipped": group_rows(skipped, endpoints), "certs": list(certs.values())}
+    return {"attacks": attack_groups, "lower": group_rows(lower), "skipped": group_rows(skipped),
+            "certs": list(certs.values())}
 
 
 def nuclei_runs(path):
@@ -485,7 +507,7 @@ def report(path):
             data[lists[kind]].append(value.split("\t"))
         elif kind:
             data[kind] = value
-    for name in ("operator", "authorization", "scanner", "source", "previous"):
+    for name in ("operator", "authorization", "scanner", "source", "previous", "keep_months"):
         data.setdefault(name, "")
     data["changes"] = [row[0] for row in data["changes"]]
     data["notes"] = [row[0] for row in data["notes"]]
@@ -523,8 +545,10 @@ def report(path):
     # TCP only, like REPORT.txt.
     try:
         data["vulners"] = vulners_cves(os.path.join(path, "nmap.xml"))
+        data["vulners_summary"] = vulners_summary(data["vulners"])
     except (OSError, ValueError, ET.ParseError):
         data["vulners"] = []
+        data["vulners_summary"] = []
     failed = {f["key"] for f in data["findings"] if f["category"] == "failed"}
     data["tls"] = tls_endpoints(path, data.get("ip", ""), failed)
     for endpoint in data["tls"]:
