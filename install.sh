@@ -24,10 +24,10 @@ install_packages() {
     if command -v apt-get >/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -q
-        apt-get install -y -q nmap git python3 curl openssl bind9-dnsutils bsdextrautils procps ca-certificates
+        apt-get install -y -q nmap openssh-client git python3 curl openssl bind9-dnsutils bsdextrautils procps ca-certificates
         apt-get install -y -q ndiff || say "ndiff is not available, ndiff.txt will not be written"
     elif command -v dnf >/dev/null; then
-        dnf install -y -q nmap git python3 curl openssl bind-utils util-linux procps-ng ca-certificates
+        dnf install -y -q nmap openssh-clients git python3 curl openssl bind-utils util-linux procps-ng ca-certificates
         dnf install -y -q ndiff || say "ndiff is not available, ndiff.txt will not be written"
     else
         die "no apt-get or dnf found, install the packages by hand"

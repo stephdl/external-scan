@@ -143,16 +143,6 @@ def nuclei(path):
         print(f"ISSUE\t{str(severity).upper()}\t{ident}\t{clean(f'{name} at {urls[0]}{more}') or '-'}")
 
 
-def ssh_auth(path):
-    for port in open_ports(load_nmap(path)):
-        for script in port.findall("script"):
-            if script.get("id") != "ssh-auth-methods":
-                continue
-            methods = sorted({elem.text.strip() for elem in script.iter("elem") if elem.text and elem.text.strip()})
-            if methods:
-                print(f"{port.get('portid')}\t{' '.join(methods)}")
-
-
 COMMANDS = {
     "check-ip": check_ip,
     "resolve": resolve,
@@ -161,7 +151,6 @@ COMMANDS = {
     "testssl": testssl,
     "ssh-audit": ssh_audit,
     "nuclei": nuclei,
-    "ssh-auth": ssh_auth,
 }
 
 
