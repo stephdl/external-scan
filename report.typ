@@ -36,7 +36,7 @@
   how: "How",
   target: "Target",
   scanner: "Scanning machine",
-  source: "Source address",
+  source: "Local source address",
   start: "Start",
   end: "End",
   duration: "Duration",
@@ -50,6 +50,8 @@
   udp-skipped: "not scanned, see the notes",
   names: "Names tested",
   names-none: "no name, the bare address only",
+  names-not-run: "none, the port scan did not finish",
+  not-completed: "not completed",
   web-scan: "Web application scan",
   on: "yes",
   off: "no",
@@ -138,7 +140,6 @@
   text(size: 7.5pt, weight: "bold", fill: color, label),
 )
 
-// A table with a shaded header row, or the "None." line when there are no rows.
 #let data-table(columns, header, rows) = {
   if rows.len() == 0 { return empty-line }
   set text(size: 8.5pt)
@@ -197,7 +198,6 @@
   },
 )
 
-// Cover page
 #v(2.5cm)
 #text(size: 10pt, fill: muted, tracking: 1.5pt, upper(t("kicker")))
 #v(0.2em)
@@ -281,10 +281,12 @@
   (t("udp"), if data.udp_ports == "" { t("udp-none") } else if data.udp_done != "1" {
     t("udp-skipped")
   } else { data.udp_ports.replace(",", ", ") }),
-  (t("names"), if data.checks.len() == 0 { t("names-none") } else {
+  (t("names"), if data.nmap_done != "1" { t("names-not-run") } else if data.checks.len() == 0 {
+    t("names-none")
+  } else {
     data.checks.map(c => [#c.name:#c.port (#c.mode)]).join(linebreak())
   }),
-  (t("web-scan"), t(data.web_scan)),
+  (t("web-scan"), if data.web_ran == "1" { t("on") } else { t("off") }),
 ))
 == #t("how")
 #key-values((
@@ -293,13 +295,15 @@
 ))
 #v(0.4em)
 *#t("steps")*
-#enum(
-  t("step-nmap"),
-  t("step-tls"),
-  t("step-ssh"),
-  ..if data.web_scan == "on" { (t("step-web"),) },
-  t("step-compare"),
-)
+#if data.nmap_done != "1" { enum(t("step-nmap")) } else {
+  enum(
+    t("step-nmap"),
+    t("step-tls"),
+    t("step-ssh"),
+    ..if data.web_ran == "1" { (t("step-web"),) },
+    t("step-compare"),
+  )
+}
 #block(fill: header-fill, inset: 9pt, radius: 2pt, width: 100%, text(size: 9pt, t("limits")))
 
 = #t("changes") #if data.previous != "" [#t("changes-since") #data.previous]
@@ -355,7 +359,7 @@
   (1fr, auto, auto, 1.1fr, auto),
   (t("name"), t("grade"), t("protocols"), t("certificate"), t("expires")),
   data.tls.map(e => (
-    [#e.name:#e.port],
+    [#e.name:#e.port #if not e.completed [\ #pill(t("not-completed"), status-colors.ERROR)]],
     if e.grade == "" { "" } else {
       let color = if e.grade.starts-with("A") { status-colors.OK } else if e.grade.starts-with("B") {
         severity-colors.MEDIUM
@@ -377,33 +381,38 @@
 #data-table(
   (auto, 1fr, auto, auto, auto),
   (t("port"), t("software"), t("weak"), t("warnings"), t("cves")),
-  data.ssh.map(s => (
-    s.port,
-    s.software,
-    if s.fail > 0 { text(weight: "bold", fill: status-colors.ATTENTION, str(s.fail)) } else { "0" },
-    str(s.warn),
-    str(s.cves),
-  )),
+  data.ssh.map(s => if not s.completed {
+    (s.port, pill(t("not-completed"), status-colors.ERROR), "", "", "")
+  } else {
+    (
+      s.port,
+      s.software,
+      if s.fail > 0 { text(weight: "bold", fill: status-colors.ATTENTION, str(s.fail)) } else { "0" },
+      str(s.warn),
+      str(s.cves),
+    )
+  }),
 )
 
-#if data.web_scan == "on" or data.web.len() > 0 [
+#if data.web_ran == "1" or data.web.len() > 0 [
   = #t("web")
   #intro(t("web-intro"))
   #data-table(
     (30%, auto, 1fr),
     (t("site"), t("severity"), t("match")),
-    data.web.map(s => if s.matches.len() == 0 {
-      ((
-        [#s.name:#s.port],
-        "",
-        text(fill: muted, t("no-match")),
-      ),)
-    } else {
-      s.matches.map(m => (
+    data.web.map(s => {
+      let rows = s.matches.map(m => (
         [#s.name:#s.port],
         if m.severity in severity-colors { pill(m.severity, severity-colors.at(m.severity)) } else { m.severity },
         [#m.name \ #mono(m.url)],
       ))
+      // A site that stopped answering may have more matches than listed, so it never reads as clean.
+      if not s.completed {
+        rows.push(([#s.name:#s.port], "", pill(t("not-completed"), status-colors.ERROR)))
+      } else if rows.len() == 0 {
+        rows.push(([#s.name:#s.port], "", text(fill: muted, t("no-match"))))
+      }
+      rows
     }).flatten().chunks(3),
   )
 ]

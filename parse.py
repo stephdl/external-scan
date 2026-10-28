@@ -85,23 +85,33 @@ def vulners(path):
         print(f"{port}\t{high}\t{top:.1f}\t{total}")
 
 
-def testssl(path):
-    with open(path) as handle:
+def load_testssl(path):
+    with open(path, encoding="utf-8") as handle:
         findings = json.load(handle)
     if not isinstance(findings, list):
         raise ValueError(f"{path}: expected the flat JSON format (--jsonfile)")
-    now = datetime.now(timezone.utc)
-    for item in findings:
+    return findings
+
+
+def cert_days(not_after):
+    """Days left before a testssl cert_notAfter date, None when it is not a date."""
+    try:
+        end = datetime.strptime(not_after.strip(), "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return (end - datetime.now(timezone.utc)).days
+
+
+def testssl(path):
+    for item in load_testssl(path):
         ident = item.get("id", "")
         severity = item.get("severity", "")
         finding = item.get("finding", "")
         # With several certificates the id gets a suffix like "cert_notAfter <hostCert#1>".
         if ident.startswith("cert_notAfter"):
-            try:
-                end = datetime.strptime(finding.strip(), "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-            except ValueError:
-                continue
-            print(f"CERT\t{finding.strip()}\t{(end - now).days}")
+            days = cert_days(finding)
+            if days is not None:
+                print(f"CERT\t{finding.strip()}\t{days}")
         # One line per offered cipher would flood the report, cipherlist_* already sums them up.
         # The overall grade only repeats the other findings.
         elif ident.startswith(("cipher-", "cipher_order-")) or ident == "overall_grade":
@@ -112,40 +122,55 @@ def testssl(path):
             print(f"ISSUE\t{severity}\t{key_part(ident)}\t{clean(finding) or '-'}")
 
 
-def ssh_audit(path):
-    with open(path) as handle:
+def load_ssh_audit(path):
+    with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     if not isinstance(data, dict) or not isinstance(data.get("banner"), dict):
         raise ValueError(f"{path}: unexpected ssh-audit JSON")
     # On a failed connection ssh-audit still writes a JSON skeleton, with an empty banner.
     if not data["banner"].get("raw"):
         raise ValueError(f"{path}: no SSH banner received")
+    return data
+
+
+def ssh_notes(data):
+    """Yields (kind, algorithm, level, note) for each fail and warn note of ssh-audit."""
     for kind in ("kex", "key", "enc", "mac"):
         for alg in data.get(kind) or []:
             notes = alg.get("notes") if isinstance(alg, dict) else None
             if not isinstance(notes, dict):
                 continue
-            for note in notes.get("fail") or []:
-                # Algorithms newer than ssh-audit, like the post-quantum mlkem ones, are not a weakness.
-                if note == "using unknown algorithm":
-                    continue
-                print(f"FAIL\t{kind}\t{key_part(alg.get('algorithm', '?'))}\t{clean(note) or '-'}")
+            for level in ("fail", "warn"):
+                for note in notes.get(level) or []:
+                    # Algorithms newer than ssh-audit, like the post-quantum mlkem ones, are not a weakness.
+                    if note != "using unknown algorithm":
+                        yield kind, alg.get("algorithm", "?"), level, note
+
+
+def ssh_audit(path):
+    data = load_ssh_audit(path)
+    for kind, alg, level, note in ssh_notes(data):
+        if level == "fail":
+            print(f"FAIL\t{kind}\t{key_part(alg)}\t{clean(note) or '-'}")
     for cve in data.get("cves") or []:
         print(f"CVE\t{key_part(cve.get('name', '?'))}\t{cve.get('cvssv2', '?')}\t{clean(cve.get('description', '')) or '-'}")
+
+
+def read_nuclei(path):
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                yield json.loads(line)
 
 
 def nuclei(path):
     # One template can match several URLs, one line per template keeps one finding per key.
     found = {}
-    with open(path) as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            item = json.loads(line)
-            info = item.get("info") or {}
-            ident = key_part(item.get("template-id", "?"))
-            entry = found.setdefault(ident, [info.get("severity", "?"), info.get("name", ""), []])
-            entry[2].append(item.get("matched-at", ""))
+    for item in read_nuclei(path):
+        info = item.get("info") or {}
+        ident = key_part(item.get("template-id", "?"))
+        entry = found.setdefault(ident, [info.get("severity", "?"), info.get("name", ""), []])
+        entry[2].append(item.get("matched-at", ""))
     for ident, (severity, name, urls) in sorted(found.items()):
         more = f" and {len(urls) - 1} more" if len(urls) > 1 else ""
         print(f"ISSUE\t{str(severity).upper()}\t{ident}\t{clean(f'{name} at {urls[0]}{more}') or '-'}")
@@ -163,42 +188,36 @@ def local_time(epoch):
     return datetime.fromtimestamp(int(epoch)).astimezone().strftime("%Y-%m-%d %H:%M %z")
 
 
-def tls_endpoints(path, ip):
+def tls_endpoints(path, ip, failed):
     endpoints = []
     folder = os.path.join(path, "testssl")
     for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
         if not name.endswith(".json"):
             continue
         host, _, port = name[:-5].rpartition("_")
+        host = ip if host == "ip" else host
         try:
-            with open(os.path.join(folder, name), encoding="utf-8") as handle:
-                items = json.load(handle)
+            items = load_testssl(os.path.join(folder, name))
         except (OSError, ValueError):
-            continue
+            items = []
         first = {}
-        for item in items if isinstance(items, list) else []:
+        for item in items:
             # With several certificates the id gets a suffix like "cert_notAfter <hostCert#1>", the first one is kept.
             first.setdefault(str(item.get("id", "")).split(" ")[0], item)
         found = {key: clean(item.get("finding", ""), 120) for key, item in first.items()}
-        days = ""
-        try:
-            end = datetime.strptime(found.get("cert_notAfter", ""), "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-            days = (end - datetime.now(timezone.utc)).days
-        except ValueError:
-            pass
+        days = cert_days(found.get("cert_notAfter", ""))
         endpoints.append({
-            "name": ip if host == "ip" else host,
+            "name": host,
             "port": port,
+            "completed": bool(items) and f"failed/tls/{host}/{port}" not in failed,
             "protocols": [label for key, label in (("SSLv2", "SSLv2"), ("SSLv3", "SSLv3"), ("TLS1", "TLS 1.0"),
                           ("TLS1_1", "TLS 1.1"), ("TLS1_2", "TLS 1.2"), ("TLS1_3", "TLS 1.3"))
                           if found.get(key, "").startswith("offered")],
             "grade": found.get("overall_grade", ""),
             "subject": found.get("cert_commonName", ""),
-            "issuer": found.get("cert_caIssuers", ""),
             "trust": found.get("cert_chain_of_trust", ""),
             "expires": found.get("cert_notAfter", ""),
-            "days": days,
-            "hsts": found.get("HSTS", ""),
+            "days": "" if days is None else days,
         })
     return endpoints
 
@@ -210,28 +229,23 @@ def ssh_servers(path):
         if not match:
             continue
         try:
-            with open(os.path.join(path, name), encoding="utf-8") as handle:
-                data = json.load(handle)
+            data = load_ssh_audit(os.path.join(path, name))
         except (OSError, ValueError):
+            servers.append({"port": match.group(1), "completed": False})
             continue
-        fail = warn = 0
-        for kind in ("kex", "key", "enc", "mac"):
-            for alg in data.get(kind) or []:
-                notes = alg.get("notes") if isinstance(alg, dict) else None
-                if isinstance(notes, dict):
-                    fail += any(note != "using unknown algorithm" for note in notes.get("fail") or [])
-                    warn += bool(notes.get("warn"))
+        notes = list(ssh_notes(data))
         servers.append({
             "port": match.group(1),
-            "software": clean((data.get("banner") or {}).get("raw", ""), 80),
-            "fail": fail,
-            "warn": warn,
+            "completed": True,
+            "software": clean(data["banner"]["raw"], 80),
+            "fail": len({(kind, alg) for kind, alg, level, _ in notes if level == "fail"}),
+            "warn": len({(kind, alg) for kind, alg, level, _ in notes if level == "warn"}),
             "cves": len(data.get("cves") or []),
         })
     return servers
 
 
-def web_sites(path):
+def web_sites(path, failed):
     sites = []
     folder = os.path.join(path, "nuclei")
     for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
@@ -239,19 +253,18 @@ def web_sites(path):
             continue
         host, _, port = name[:-6].rpartition("_")
         matches = []
-        with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                try:
-                    item = json.loads(line)
-                except ValueError:
-                    continue
+        try:
+            for item in read_nuclei(os.path.join(folder, name)):
                 info = item.get("info") or {}
                 matches.append({
                     "severity": str(info.get("severity", "")).upper(),
                     "name": clean(info.get("name", ""), 120),
                     "url": clean(item.get("matched-at", ""), 120),
                 })
-        sites.append({"name": host, "port": port, "matches": matches})
+        except (OSError, ValueError):
+            pass
+        sites.append({"name": host, "port": port, "matches": matches,
+                      "completed": f"failed/web/{host}/{port}" not in failed})
     return sites
 
 
@@ -316,12 +329,15 @@ def report(path):
             data[lists[kind]].append(value.split("\t"))
         elif kind:
             data[kind] = value
+    for name in ("operator", "authorization", "scanner", "source", "previous"):
+        data.setdefault(name, "")
     data["changes"] = [row[0] for row in data["changes"]]
     data["notes"] = [row[0] for row in data["notes"]]
     data["checks"] = [dict(zip(("mode", "name", "port"), row[0].split())) for row in data["checks"]]
     data["versions"] = [{"tool": row[0], "version": row[1] if len(row) > 1 else ""} for row in data["versions"]]
     data["accepted"] = [dict(zip(("pattern", "count", "until", "reason"), row)) for row in data["accepted"]]
-    attention = {row[0] for row in data.pop("attention")}
+    # The attention text can say that an acceptance has expired, findings.tsv does not.
+    attention = {row[0]: row[1] if len(row) > 1 else "" for row in data.pop("attention")}
     data["duration_minutes"] = max(0, (int(data["finished"]) - int(data["started"])) // 60)
     data["started"] = local_time(data["started"])
     data["finished"] = local_time(data["finished"])
@@ -335,7 +351,8 @@ def report(path):
     ]
     data["findings"] = []
     for row in read_tsv(os.path.join(path, "findings.tsv")):
-        key, text = row[0], row[1] if len(row) > 1 else ""
+        key = row[0]
+        text = attention.get(key) or (row[1] if len(row) > 1 else "")
         severity = re.match(r"(?:testssl|nuclei) (\w+) on ", text)
         data["findings"].append({
             "key": key,
@@ -352,9 +369,10 @@ def report(path):
                                 for port, high, top, total in vulners_rows(os.path.join(path, name))]
         except (OSError, ValueError, ET.ParseError):
             pass
-    data["tls"] = tls_endpoints(path, data.get("ip", ""))
+    failed = {f["key"] for f in data["findings"] if f["category"] == "failed"}
+    data["tls"] = tls_endpoints(path, data.get("ip", ""), failed)
     data["ssh"] = ssh_servers(path)
-    data["web"] = web_sites(path)
+    data["web"] = web_sites(path, failed)
     data["files"] = checksums(path)
     # Bytes, so the output stays UTF-8 under the LC_ALL=C of the bash script.
     sys.stdout.buffer.write(json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"))

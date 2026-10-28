@@ -605,7 +605,6 @@ emit() {
 }
 
 report_data() {
-    local c cip rest
     emit ip "$ip"
     emit label "$label"
     emit date "$TODAY"
@@ -618,7 +617,8 @@ report_data() {
     emit udp_done "$udp_done"
     emit sensitive_ports "$SENSITIVE_PORTS"
     emit cert_warn_days "$CERT_WARN_DAYS"
-    emit web_scan "${TARGET_WEB_SCAN[$ip]:-$WEB_SCAN}"
+    emit nmap_done "$nmap_done"
+    emit web_ran "$web_ran"
     emit operator "$OPERATOR"
     emit authorization "${TARGET_AUTH[$ip]:-}"
     emit scanner "$(hostname -f 2>/dev/null || uname -n)"
@@ -633,12 +633,7 @@ report_data() {
     emit attention "${attention[@]}"
     emit accepted "${accepted_data[@]}"
     emit note "${notes[@]}"
-    for c in "${CHECKS[@]}"; do
-        read -r cip rest <<<"$c"
-        if [[ $cip == "$ip" ]]; then
-            emit check "$rest"
-        fi
-    done
+    emit check "${checked[@]}"
 }
 
 # The PDF goes to the owner of the target. A failure shows in SUMMARY.txt but never changes the status.
@@ -657,11 +652,14 @@ scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
-    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0
+    local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total
-    local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=() accepted_data=()
+    local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=() accepted_data=() checked=()
 
     started=$(date +%s)
+    # Before nmap, so a report on a failed nmap still names the previous scan.
+    prev=$(find_previous "$ip")
+    [[ -z $prev ]] || prev_date=$(basename "$(dirname "$(dirname "$prev")")")
 
     mkdir -p "$dir/testssl"
     log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
@@ -670,10 +668,12 @@ scan_target() {
         log "[$ip] nmap failed"
         status=ERROR
         notes+=("nmap did not finish, nothing else was tested. See scan.log.")
+        [[ -z $prev_date ]] || changes+=("Not compared, nmap did not finish.")
         write_report
         record
         return
     fi
+    nmap_done=1
     log "[$ip] nmap done, $(wc -l <"$dir/ports.tsv") open TCP port(s)"
 
     if [[ -z $UDP_PORTS ]]; then
@@ -693,11 +693,9 @@ scan_target() {
         fi
     fi
 
-    prev=$(find_previous "$ip")
     if [[ -z $prev ]]; then
         changes+=("First scan of this target. This report is the baseline, there is nothing to compare.")
     else
-        prev_date=$(basename "$(dirname "$(dirname "$prev")")")
         prev_tsv=$(python3 "$PARSE" ports "$prev")
         cur_ports=$(cut -f1 "$dir/ports.tsv")
         # UDP is compared only when both scans have it, so a missing UDP scan never looks like closed ports.
@@ -743,6 +741,7 @@ scan_target() {
         check_dns "$fqdn"
         run_testssl "$mode" "$fqdn" "$port"
         covered+="$port "
+        checked+=("$mode $fqdn $port")
         if [[ $mode == https ]] && web_scan_on "$ip"; then
             run_nuclei "$fqdn" "$port"
         fi
