@@ -98,7 +98,9 @@ def testssl(path):
         # The overall grade only repeats the other findings.
         elif ident.startswith(("cipher-", "cipher_order-")) or ident == "overall_grade":
             continue
-        elif severity in ("HIGH", "CRITICAL", "FATAL"):
+        elif severity == "FATAL":
+            print(f"FATAL\t{key_part(ident)}\t{clean(finding) or '-'}")
+        elif severity in ("HIGH", "CRITICAL"):
             print(f"ISSUE\t{severity}\t{key_part(ident)}\t{clean(finding) or '-'}")
 
 
