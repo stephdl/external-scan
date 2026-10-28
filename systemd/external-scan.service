@@ -7,7 +7,8 @@ After=network-online.target
 Type=oneshot
 User=external-scan
 Group=external-scan
-ExecStart=/var/lib/external-scan/external-scan
+# Through bash: SELinux does not let systemd execute a file labelled var_lib_t.
+ExecStart=/bin/bash /var/lib/external-scan/external-scan
 # Raw sockets for the nmap SYN scan, given to this service only instead of setcap on nmap.
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN

@@ -61,7 +61,7 @@ git_checkout https://github.com/jtesta/ssh-audit.git "$BASE/tools/ssh-audit" "$S
 
 say "setting permissions"
 # Only results/ is writable by the scan user, so a compromised tool cannot change the code or the targets.
-chown root:root "$BASE"
+find "$BASE" -path "$BASE/results" -prune -o -exec chown root:root {} +
 chmod 755 "$BASE" "$BASE/external-scan" "$BASE/parse.py"
 install -d -o "$SCAN_USER" -g "$SCAN_USER" -m 750 "$BASE/results"
 if [[ -e $BASE/external-scan.conf ]]; then
@@ -73,9 +73,11 @@ fi
 chown "root:$SCAN_USER" "$BASE/external-scan.conf"
 chmod 640 "$BASE/external-scan.conf"
 
-say "linking systemd units"
+say "installing systemd units"
+# Copied, not linked: SELinux refuses to start a unit file labelled var_lib_t.
 for unit in external-scan.service external-scan.timer; do
-    [[ -L /etc/systemd/system/$unit ]] || systemctl link "$BASE/systemd/$unit"
+    rm -f "/etc/systemd/system/$unit"
+    install -m 644 "$BASE/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 
