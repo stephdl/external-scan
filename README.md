@@ -10,7 +10,7 @@ For each address it:
 3. checks certificates and TLS settings with testssl.sh,
 4. checks SSH settings with ssh-audit,
 5. scans each web site name with nuclei, when `web_scan` is on,
-6. writes a short plain text report.
+6. writes a short plain text report, and a PDF for the owner when `pdf_report` is on.
 
 ## Before you scan
 
@@ -43,7 +43,7 @@ again. It does the following:
 
 - installs nmap, python3 and the other packages,
 - creates the `external-scan` system user,
-- fetches pinned versions of testssl.sh, ssh-audit and nuclei into `tools/`,
+- fetches pinned versions of testssl.sh, ssh-audit, nuclei and typst into `tools/`,
 - creates `external-scan.conf` from the example if it does not exist,
 - copies the systemd service and timer to `/etc/systemd/system`.
 
@@ -173,6 +173,8 @@ results/2026-11-01/
   scan.log                        what ran and when, tool errors
   203.0.113.10_firewall.example.com/
     REPORT.txt                    the report for this address
+    REPORT.pdf                    the same for the owner, when pdf_report is on
+    report.json                   the data of REPORT.pdf
     nmap.txt  nmap.xml            full nmap output
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
@@ -224,6 +226,27 @@ matches nothing is reported, so the config stays clean.
 The first scan of an address is the baseline. It does not report new ports.
 
 Results older than `keep_months` are deleted after each successful scan.
+
+### PDF report for the owner
+
+Set `pdf_report on` in the config to also get a `REPORT.pdf` in English per
+address, to send to its owner. It says who ran the scan, from which machine,
+when it started and ended, what was tested and with which tool versions. Then it gives the findings to fix, the accepted risks, the open
+ports, the TLS and SSH details, and the SHA-256 of every raw result.
+
+Add `operator` once and `authorization` under each target to print who scans
+and under which permission. Without them the PDF says they are not set.
+
+The PDF is rendered by [typst](https://typst.app), a single binary that
+`install.sh` fetches into `tools/`, with its own fonts. The template is
+`report.typ`. A PDF that fails is noted in `SUMMARY.txt` and `scan.log`, it
+never changes the status. To render it again by hand:
+
+```
+tools/typst/typst compile --root / --ignore-system-fonts \
+    --input data=$PWD/results/<date>/<target>/report.json \
+    report.typ /tmp/REPORT.pdf
+```
 
 ## Uptime Kuma (optional)
 
