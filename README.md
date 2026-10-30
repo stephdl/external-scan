@@ -39,8 +39,8 @@ versions that ran the scan.
 ## Before you scan
 
 **Get written permission from the owner of every address you scan.** Only
-list those addresses in the config. The script refuses ranges and host names,
-and never connects to an address that is not in the config.
+list those addresses in the config. The script refuses ranges, host names and
+IPv6 addresses, and never connects to an address that is not in the config.
 
 **The nuclei web scan is a vulnerability scan, not a port scan.** It stays off
 until `web_scan on` is set. Turn it on only for owners whose written
