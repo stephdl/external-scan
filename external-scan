@@ -619,6 +619,7 @@ emit() {
 report_data() {
     emit ip "$ip"
     emit label "$label"
+    emit pdf "$report.pdf"
     emit date "$TODAY"
     emit started "$started"
     emit finished "$(date +%s)"
@@ -666,9 +667,10 @@ write_pdf() {
 
 scan_target() {
     local ip=$1 label=$2
-    local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
+    local safe=${label//[^A-Za-z0-9._-]/_}
+    local dir=$RUN_DIR/${ip}_$safe
     # The name and date stay in the file name, so a report sent on its own is still told apart.
-    local report=REPORT_${label//[^A-Za-z0-9._-]/_}_$TODAY
+    local report=REPORT_${safe}_$TODAY
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
     local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total
