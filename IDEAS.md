@@ -72,6 +72,8 @@ The config refuses IPv6 addresses today. Supporting them needs `-6` for nmap,
 testssl.sh and ssh-audit, `-6` in the nmap command printed in the PDF, and a
 refusal of IPv4-mapped addresses such as `::ffff:203.0.113.5`, which would be
 scanned over IPv6. A first try that only fixed nmap is #17, closed for that
-reason. No Constance name has an AAAA record yet, so nothing can test it.
+reason. The IPv6 brackets around an address and its port are already in
+external-scan, parse.py and report.typ, kept on purpose for this. No Constance
+name has an AAAA record yet, so nothing can test it.
 
 Risk: none. Cost: small, plus a reachable IPv6 target to test.
