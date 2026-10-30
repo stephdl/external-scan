@@ -6,33 +6,19 @@ goes to the target addresses.
 
 ## Decisions
 
-- 1, 2 and 6 are done in #2.
-- 7 comes next, with nuclei, in its own pull request.
+- Done: 1 and 2 in #2 (`sshpw/<port>` and `sensitive_ports`), 6 in #2
+  (findings compared with the previous scan), 7 with nuclei and `web_scan`.
+  They are removed from this list.
 - 3, 4, 5 and 8 are dropped.
   - 3: a broken SPF or DMARC shows up within hours as rejected mail. A
     monthly scan only adds value for a policy that is too loose, and that
     rarely changes.
   - 4: a monthly check sees a blocklisting weeks too late. Hourly monitoring
-    such as Uptime Kuma is the right place for it.
+    is the right place for it.
   - 5: a wildcard certificate hides every subdomain from the certificate
     logs, so crt.sh finds nothing useful.
   - 8: it mostly repeats the scan.
-
-## 1. SSH password login
-
-The nmap script `ssh-auth-methods` lists the login methods the SSH server
-offers, so the report can say if passwords are accepted or only keys.
-ssh-audit does not check this. It takes a few seconds and tries no login.
-
-Risk: none. Cost: small.
-
-## 2. Admin ports always flagged
-
-Keep a list of well known admin ports (9090, 8443, 10000, 3389, 5900, 980...)
-and set the status to ATTENTION whenever one is open, not only when it is new.
-An exposed firewall web UI would then show up every month.
-
-Risk: none. Cost: small.
+- Open: 9 and 10.
 
 ## 3. Mail security in DNS (passive)
 
@@ -58,36 +44,6 @@ The scan still never connects to a name outside the targets.
 
 Risk: none. Cost: medium.
 
-## 6. TLS and SSH changes month to month
-
-Today only ports are compared with the previous scan. Also report a TLS or SSH
-finding that was not there last month, so a regression stands out.
-
-Risk: none. Cost: medium.
-
-## 7. Web application scan
-
-Behind a reverse proxy nmap only sees the proxy, so vulners never sees the
-applications. A web scanner run on each configured name would find outdated
-Nextcloud, Mattermost or SOGo versions, exposed admin pages and files like
-`.git` or `.env`.
-
-Candidates:
-
-- nuclei, template based and fast. Limit it with
-  `-severity critical,high -exclude-tags dos,intrusive,fuzz` and a rate limit.
-- Nikto, older and noisier, but simple.
-- OWASP ZAP baseline scan, passive by default, good for HTTP headers and
-  cookies.
-- Greenbone OpenVAS, a full vulnerability scanner. Thorough but heavy, it
-  needs its own database and services.
-
-Risk: real. These tools send many requests and some templates probe for
-vulnerabilities. Check that the written permission covers a vulnerability scan
-and not only a port scan, and whitelist the scanner first.
-
-Cost: medium for nuclei, high for OpenVAS.
-
 ## 8. Shodan or Censys (passive)
 
 Compare the scan with what Shodan or Censys already see for each IP, with their
@@ -109,3 +65,13 @@ text and PDF reports would read the columns. classify_findings and
 compare_findings read findings.tsv too, so they would change with it.
 
 Risk: none. Cost: medium.
+
+## 10. IPv6 targets
+
+The config refuses IPv6 addresses today. Supporting them needs `-6` for nmap,
+testssl.sh and ssh-audit, `-6` in the nmap command printed in the PDF, and a
+refusal of IPv4-mapped addresses such as `::ffff:203.0.113.5`, which would be
+scanned over IPv6. A first try that only fixed nmap is #17, closed for that
+reason. No Constance name has an AAAA record yet, so nothing can test it.
+
+Risk: none. Cost: small, plus a reachable IPv6 target to test.
