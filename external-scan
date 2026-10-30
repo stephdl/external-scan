@@ -674,7 +674,7 @@ scan_target() {
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
     local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total
-    local -a changes=() certs=() vulns=() notes=() findings=() attention=() accepted=() accepted_data=() checked=()
+    local -a family=() changes=() certs=() vulns=() notes=() findings=() attention=() accepted=() accepted_data=() checked=()
 
     started=$(date +%s)
     # Before nmap, so a report on a failed nmap still names the previous scan.
@@ -682,8 +682,10 @@ scan_target() {
     [[ -z $prev ]] || prev_date=$(run_time "$(basename "$(dirname "$(dirname "$prev")")")")
 
     mkdir -p "$dir/testssl"
+    # nmap refuses an IPv6 address without -6.
+    [[ $ip != *:* ]] || family=(-6)
     log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
-    timeout 6h nmap "${NMAP_ARGS[@]}" -oX "$dir/nmap.xml" -oN "$dir/nmap.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
+    timeout 6h nmap "${family[@]}" "${NMAP_ARGS[@]}" -oX "$dir/nmap.xml" -oN "$dir/nmap.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
     if ! python3 "$PARSE" ports "$dir/nmap.xml" >"$dir/ports.tsv" 2>>"$LOG"; then
         log "[$ip] nmap failed"
         status=ERROR
@@ -702,7 +704,7 @@ scan_target() {
         notes+=("UDP not scanned, it needs CAP_NET_RAW. Start the scan with systemctl.")
     else
         log "[$ip] nmap UDP started, ports $UDP_PORTS"
-        timeout 4h nmap -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
+        timeout 4h nmap "${family[@]}" -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
             -oX "$dir/nmap-udp.xml" -oN "$dir/nmap-udp.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
         if python3 "$PARSE" ports "$dir/nmap-udp.xml" >>"$dir/ports.tsv" 2>>"$LOG"; then
             udp_done=1
