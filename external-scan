@@ -16,9 +16,10 @@ TYPST=$BASE/tools/typst/typst
 TEMPLATE=$BASE/report.typ
 # nuclei keeps its config and templates under $HOME, the scan user can only write here.
 NUCLEI_HOME=$BASE/cache/nuclei
-TODAY=$(date +%F)
 # One folder per run, so a second scan on the same day keeps the first one.
-RUN_ID=${TODAY}_$(date +%H%M)
+# A single date call, so a run started at midnight never mixes two days.
+RUN_ID=$(date +%F_%H%M)
+TODAY=${RUN_ID%_*}
 
 CERT_WARN_DAYS=30
 KEEP_MONTHS=12
@@ -296,13 +297,24 @@ port_is_open() {
     awk -F'\t' -v p="$1/tcp" '$1 == p { found = 1 } END { exit !found }' "$2"
 }
 
+# Also matches the folders named after the day only, written before the time was added.
+is_run_dir() {
+    [[ -d $1 && ! -L $1 && ${1##*/} =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(_[0-9]{4})?$ ]]
+}
+
+# "2026-11-01_0312" -> "2026-11-01 03:12", "2026-11-01" stays as is.
+run_time() {
+    local id=$1
+    [[ $id == *_* ]] && id="${id%_*} ${id:11:2}:${id:13:2}"
+    echo "$id"
+}
+
 find_previous() {
     local ip=$1 i day xml
-    # Also matches the folders named after the day only, written before the time was added.
-    local -a days=("$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*)
+    local -a days=("$OUTPUT"/[0-9]*)
     for (( i = ${#days[@]} - 1; i >= 0; i-- )); do
         day=${days[i]}
-        [[ -d $day && ${day##*/} != "$RUN_ID" ]] || continue
+        is_run_dir "$day" && [[ ${day##*/} != "$RUN_ID" ]] || continue
         for xml in "$day/${ip}"_*/nmap.xml; do
             if [[ -f $xml ]] && python3 "$PARSE" ports "$xml" >/dev/null 2>&1; then
                 echo "$xml"
@@ -584,7 +596,7 @@ write_report() {
     {
         echo "External scan report"
         echo "Target : $ip ($label)"
-        echo "Date   : $TODAY"
+        echo "Date   : $(run_time "$RUN_ID")"
         echo "Scan   : $SCAN_TYPE"
         echo "Status : $status"
         echo
@@ -623,7 +635,7 @@ report_data() {
     emit ip "$ip"
     emit label "$label"
     emit pdf "$report.pdf"
-    emit date "$TODAY"
+    emit date "$(run_time "$RUN_ID")"
     emit started "$started"
     emit finished "$(date +%s)"
     emit status "$status"
@@ -684,10 +696,7 @@ scan_target() {
     started=$(date +%s)
     # Before nmap, so a report on a failed nmap still names the previous scan.
     prev=$(find_previous "$ip")
-    if [[ -n $prev ]]; then
-        prev_date=$(basename "$(dirname "$(dirname "$prev")")")
-        [[ $prev_date != *_* ]] || prev_date="${prev_date%_*} ${prev_date:11:2}:${prev_date:13:2}"
-    fi
+    [[ -z $prev ]] || prev_date=$(run_time "$(basename "$(dirname "$(dirname "$prev")")")")
 
     mkdir -p "$dir/testssl"
     log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
@@ -815,10 +824,11 @@ record() {
 }
 
 prune_old() {
-    local cutoff day
+    local cutoff day name
     cutoff=$(date -d "-$KEEP_MONTHS months" +%F)
-    for day in "$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*; do
-        [[ -d $day && ${day:${#OUTPUT}+1:10} < $cutoff ]] || continue
+    for day in "$OUTPUT"/[0-9]*; do
+        name=${day##*/}
+        is_run_dir "$day" && [[ ${name:0:10} < $cutoff ]] || continue
         rm -rf -- "$day"
         log "removed old results ${day##*/}"
     done
@@ -848,7 +858,6 @@ main() {
     # Only a second run in the same minute replaces the first one.
     [[ ! -d $RUN_DIR ]] || rm -rf -- "$RUN_DIR"
     mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
-    ln -sfn "$RUN_ID" "$OUTPUT/latest"
     LOG=$RUN_DIR/scan.log
 
     NMAP_ARGS=(-Pn -sV --script vulners -p- --open)
@@ -870,22 +879,24 @@ main() {
     (( ANY_ATTENTION )) && global=ATTENTION
     (( ANY_ERROR )) && global=ERROR
     {
-        echo "External scan summary, $TODAY ${RUN_ID:11:2}:${RUN_ID:13:2}"
+        echo "External scan summary, $(run_time "$RUN_ID")"
         echo "Overall status: $global"
         echo
         printf '%s\n' "${SUMMARY[@]}"
     } >"$RUN_DIR/SUMMARY.txt"
+    # Only now, so latest never points to a run without its summary.
+    ln -sfnT "$RUN_ID" "$OUTPUT/latest" 2>>"$LOG" || log "cannot update $OUTPUT/latest"
 
     (( ANY_ERROR )) || prune_old
 
     if (( ANY_ERROR )); then
-        kuma_push down "external-scan $TODAY: scan error, see SUMMARY.txt"
+        kuma_push down "external-scan $RUN_ID: scan error, see SUMMARY.txt"
     elif (( ANY_NEW_PORT )); then
-        kuma_push down "external-scan $TODAY: new open port, see SUMMARY.txt"
+        kuma_push down "external-scan $RUN_ID: new open port, see SUMMARY.txt"
     elif (( ANY_ATTENTION )); then
-        kuma_push down "external-scan $TODAY: findings to look at, see SUMMARY.txt"
+        kuma_push down "external-scan $RUN_ID: findings to look at, see SUMMARY.txt"
     else
-        kuma_push up "external-scan $TODAY: $global"
+        kuma_push up "external-scan $RUN_ID: $global"
     fi
 
     log "finished, status $global"

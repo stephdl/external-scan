@@ -171,7 +171,7 @@ journalctl -u external-scan -f
 ```
 
 The journal only shows the start and the end. The details go to
-`results/<date>_<time>/scan.log`. `results/latest` points to the last run. Then read the summary:
+`results/<date>_<time>/scan.log`. `results/latest` points to the last finished run. Then read the summary:
 
 ```
 cat /var/lib/external-scan/results/latest/SUMMARY.txt
