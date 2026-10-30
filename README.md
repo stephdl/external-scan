@@ -30,7 +30,7 @@ The scan relies on free software. `install.sh` installs all of it.
 | systemd | runs the scan monthly as an unprivileged user with the raw socket right | distribution package |
 
 Helpers: socat, openssl, dig and hexdump for testssl.sh, git to fetch and
-update the cloned tools, curl for Uptime Kuma, and ndiff to compare two nmap
+update the cloned tools, curl to download them, and ndiff to compare two nmap
 scans when the distribution ships it.
 
 The pinned versions are at the top of `install.sh`. Each PDF report prints the
@@ -305,13 +305,6 @@ tools/typst/typst compile --root / --ignore-system-fonts \
     --input data=$PWD/results/<date>_<time>/<target>/report.json \
     report.typ /tmp/report.pdf
 ```
-
-## Uptime Kuma (optional)
-
-Set `kuma_url` in the config to the URL of a Push monitor. After each scan
-the script sends `up` when the status is OK, and `down` otherwise: an error,
-a new open port or a finding that is not accepted. The URL contains a token, so it is never written to the
-logs.
 
 ## Test on the VPS itself
 
