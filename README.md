@@ -162,8 +162,9 @@ systemctl start external-scan.service
 ```
 
 The command returns when the scan is over. A scan can take from a few minutes
-to an hour or more per address. To get the prompt back at once and follow the
-scan:
+to an hour or more per address. A second start while a scan runs stops with
+"another scan is already running". To get the prompt back at once and follow
+the scan:
 
 ```
 systemctl start --no-block external-scan.service
@@ -205,21 +206,27 @@ results/2026-11-01_0312/
     REPORT_firewall.example.com_2026-11-01_0312.pdf
                                   the report for the owner, when pdf_report is on
     report.json                   the data of the PDF, when pdf_report is on
-    nmap.txt  nmap.xml            full nmap output
-    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, unless no UDP port is set
-    ndiff.txt                     nmap diff with the previous scan
+    nmap.txt  nmap.xml            full nmap output of the TCP ports
+    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, when UDP ran
+    ports.tsv                     open TCP and UDP ports, compared next month
+    ndiff.txt                     TCP nmap diff with the previous scan, when ndiff is installed
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output
-    nuclei/                       full nuclei output per name and port
+    nuclei/                       full nuclei output per name and port, when web_scan is on
     findings.tsv                  every finding with its key, compared next month
 ```
+
+A second scan started in the same minute replaces the first one.
 
 Each report has a status:
 
 - **OK**: nothing needs a look.
 - **ATTENTION**: read "What changed" and "Needs attention". It can be a new
-  open port, or a finding that is not accepted in the config.
-- **ERROR**: the scan did not complete.
+  open port, a finding that is not accepted in the config, or a tool that
+  failed (a `failed/...` finding). A port that went away and the CVEs by
+  version never change the status.
+- **ERROR**: nmap did not finish the TCP scan, so nothing else was tested.
+  The script then exits with an error and keeps the old results.
 
 A finding is a problem the scan found: a serious TLS or SSH weakness, a
 certificate that expires soon, SSH that accepts passwords, a sensitive port
@@ -231,8 +238,8 @@ The report starts with what matters:
 - **What changed**: ports that appeared or disappeared, and findings that are
   new or fixed since the previous scan.
 - **Needs attention**: findings that are not accepted.
-- **Accepted risks**: one line per `accept` line of the config, with the
-  number of findings it covers and the reason.
+- **Accepted risks**: one line per `accept` line that covers at least one
+  finding, with the number of findings and the reason.
 - **Suggested accept lines**: ready to copy into the config.
 
 Then come the open ports, the certificates, the CVEs by version and the notes.
@@ -247,16 +254,21 @@ date and write the real reason:
 ```
 target 203.0.113.10 firewall.example.com
   accept sensitive/9090 until 2027-06-30 "firewall GUI, CrowdSec bans brute force, VPN planned"
-  accept tls/*/*/cert_revocation until 2027-06-30 "no OCSP on the internal CA"
+  accept tls/*/*/BREACH until 2027-06-30 "HTTP compression needed, no secret in the pages"
 ```
 
 From then on the status only turns to ATTENTION for something new or not yet
 accepted. An accepted finding comes back after its date. An accept line that
-matches nothing is reported, so the config stays clean.
+matches nothing is listed in the notes, so the config stays clean. This note
+is skipped when a tool failed, since the finding may only be missing for that
+reason.
 
 The first scan of an address is the baseline. It does not report new ports.
+Each scan is compared with the last earlier run where nmap finished for that
+address. UDP ports are compared only when both runs scanned UDP.
 
-Results older than `keep_months` are deleted after each successful scan.
+Results older than `keep_months` are deleted after each scan that ends
+without ERROR.
 
 ### PDF report for the owner
 
@@ -322,6 +334,10 @@ sudo -u external-scan /var/lib/external-scan/external-scan \
 
 - Many VPS providers block outgoing port 25. The SMTP test on port 25 then
   fails, while 465 and 587 still work.
+- Each tool has a time limit: nmap 6 hours for TCP and 4 hours for UDP per
+  address, testssl.sh 30 minutes per port, nuclei 30 minutes per name,
+  ssh-audit 5 minutes. systemd stops the whole run after 24 hours. A tool
+  that hits its limit gives a `failed/...` finding, nmap TCP gives ERROR.
 - nuclei stops scanning a site that stops answering. The report then shows a
   `failed/web/...` line. It is usually a ban: check the whitelist of the
   scanning VPS.
