@@ -21,9 +21,10 @@ TODAY=$(date +%F)
 CERT_WARN_DAYS=30
 KEEP_MONTHS=12
 # A full UDP scan takes about 18 hours because Linux rate limits ICMP replies, so only these.
-UDP_PORTS=53,69,111,123,137,161,389,443,500,623,1194,1434,1701,1719,1812,1900,2427,3389,3478,4500,4569,5060,5160,5349,5353,10001,11211,51820
+UDP_PORTS=7,17,19,53,67,69,88,111,123,137,138,161,162,389,427,443,464,500,514,520,623,853,1194,1434,1701,1719,1812,1813,1900,2049,2427,3283,3389,3478,3702,4500,4569,5060,5160,5349,5351,5353,5683,10001,11211,37810,47808,51820,55820
+UDP_PORTS_EXTRA=
 # Remote access, admin web interfaces, databases and file sharing: risky when open to the Internet.
-SENSITIVE_PORTS=21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,6443,8006,8443,9090,9200,9443,10000,11211,27017
+SENSITIVE_PORTS=21,23,135,139,445,902,1433,2082,2083,2086,2087,2222,2375,2376,2379,2380,3306,3389,4848,5000,5001,5432,5601,5900,5901,5985,5986,6379,6443,7001,8006,8007,8161,8291,8443,8728,8729,8834,8880,9000,9090,9200,9443,9990,10000,10250,11211,15672,19999,20000,27017
 KUMA_URL=
 WEB_SCAN=off
 PDF_REPORT=off
@@ -185,6 +186,11 @@ parse_config() {
                 list=$(port_list "$n" "${f[1]}") || exit 1
                 if [[ ${f[0]} == udp_ports ]]; then UDP_PORTS=$list; else SENSITIVE_PORTS=$list; fi
                 ;;
+            udp_ports_extra)
+                [[ ${#f[@]} -eq 2 && ${f[1]} != none ]] || die "line $n: udp_ports_extra needs a comma separated list"
+                list=$(port_list "$n" "${f[1]}") || exit 1
+                UDP_PORTS_EXTRA+=${UDP_PORTS_EXTRA:+,}$list
+                ;;
             kuma_url)
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^https?:// ]] || die "line $n: kuma_url needs an http(s) URL"
                 # Kuma shows the URL with ?status=up&msg=OK&ping=, the script adds its own query.
@@ -210,6 +216,9 @@ parse_config() {
         esac
     done <"$CONFIG"
     (( ${#TARGET_IPS[@]} > 0 )) || die "no target in $CONFIG, nothing to scan"
+    # Added to the list instead of replacing it, so a site can scan one more port without copying the defaults.
+    [[ -z $UDP_PORTS_EXTRA ]] \
+        || UDP_PORTS=$(tr ',' '\n' <<<"${UDP_PORTS:+$UDP_PORTS,}$UDP_PORTS_EXTRA" | sort -nu | paste -sd,)
 }
 
 check_tools() {
@@ -594,7 +603,7 @@ write_report() {
             "CVEs matched on the version string only. Distro packages often fix them without changing the version, so check before acting. Not counted in the status. Details in nmap.txt." "${vulns[@]}"
         section "Notes" \
             "Skipped checks, tool errors and accept lines that match nothing." "${notes[@]}"
-    } >"$dir/REPORT.txt"
+    } >"$dir/$report.txt"
     [[ $PDF_REPORT == off ]] || write_pdf
 }
 
@@ -610,6 +619,7 @@ emit() {
 report_data() {
     emit ip "$ip"
     emit label "$label"
+    emit pdf "$report.pdf"
     emit date "$TODAY"
     emit started "$started"
     emit finished "$(date +%s)"
@@ -647,17 +657,22 @@ write_pdf() {
         rm -f "$dir/report.json"
     elif "$TYPST" compile --root / --ignore-system-fonts \
         --input data="$dir/report.json" \
-        "$TEMPLATE" "$dir/REPORT.pdf" </dev/null >/dev/null 2>>"$LOG"; then
+        "$TEMPLATE" "$dir/$report.pdf" </dev/null >/dev/null 2>>"$LOG"; then
         return
     fi
     log "[$ip] PDF report failed"
-    rm -f "$dir/REPORT.pdf"
+    rm -f "$dir/$report.pdf"
     pdf_failed=1
 }
 
 scan_target() {
     local ip=$1 label=$2
-    local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
+    local safe=${label//[^A-Za-z0-9._-]/_}
+    local dir=$RUN_DIR/${ip}_$safe
+    # The name and date stay in the file name, so a report sent on its own is still told apart.
+    # Only the first word of the label, the rest is a free description.
+    local name=${label%% *}
+    local report=REPORT_${name//[^A-Za-z0-9._-]/_}_$TODAY
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
     local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total
@@ -689,7 +704,7 @@ scan_target() {
         notes+=("UDP not scanned, it needs CAP_NET_RAW. Start the scan with systemctl.")
     else
         log "[$ip] nmap UDP started, ports $UDP_PORTS"
-        timeout 2h nmap -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
+        timeout 4h nmap -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
             -oX "$dir/nmap-udp.xml" -oN "$dir/nmap-udp.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
         if python3 "$PARSE" ports "$dir/nmap-udp.xml" >>"$dir/ports.tsv" 2>>"$LOG"; then
             udp_done=1
@@ -784,8 +799,8 @@ scan_target() {
 }
 
 record() {
-    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/REPORT.txt%s' \
-        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}" \
+    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/%s.txt%s' \
+        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}" "$report" \
         "$( (( pdf_failed )) && echo "  PDF failed, see scan.log")")")
     case $status in
         ERROR) ANY_ERROR=1 ;;

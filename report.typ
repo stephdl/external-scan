@@ -1,5 +1,5 @@
 // PDF report for the owner of a target, rendered by typst from report.json.
-// external-scan runs: typst compile --root / --input data=<report.json> report.typ REPORT.pdf
+// external-scan runs: typst compile --root / --input data=<report.json> report.typ REPORT_<name>_<date>.pdf
 #let data = json(sys.inputs.data)
 
 #let strings = (

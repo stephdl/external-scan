@@ -33,22 +33,42 @@ keep_months 12
 #   scanned. UDP is limited to a list because a full UDP scan takes about
 #   18 hours. "none" disables UDP. UDP only runs when the scan is started by
 #   systemd, because it needs the CAP_NET_RAW capability.
-#   Default: 53,69,111,123,137,161,389,443,500,623,1194,1434,1701,1719,1812,
-#   1900,2427,3389,3478,4500,4569,5060,5160,5349,5353,10001,11211,51820
-#   Telephony: SIP (5060, 5160), IAX2 (4569), H.323 (1719), MGCP (2427),
-#   STUN/TURN (3478, 5349). VPN: IPsec (500, 4500), OpenVPN (1194), L2TP
-#   (1701), WireGuard (51820). Others: DNS, TFTP, rpcbind, NTP, NetBIOS,
-#   SNMP, CLDAP, QUIC, IPMI, MS-SQL browser, RADIUS, SSDP, RDP, mDNS,
-#   Ubiquiti discovery, memcached. Many of them can be abused for traffic
-#   amplification when they answer from the Internet.
+#   Default: 7,17,19,53,67,69,88,111,123,137,138,161,162,389,427,443,464,
+#   500,514,520,623,853,1194,1434,1701,1719,1812,1813,1900,2049,2427,3283,
+#   3389,3478,3702,4500,4569,5060,5160,5349,5351,5353,5683,10001,11211,37810,
+#   47808,51820,55820
+#   NethServer 8: cluster VPN WireGuard (55820), Samba AD Kerberos (88, 464)
+#   and NetBIOS (137, 138), DHCP (67). Telephony: SIP (5060, 5160), IAX2
+#   (4569), H.323 (1719), MGCP (2427), STUN/TURN (3478, 5349). VPN: IPsec
+#   (500, 4500), OpenVPN (1194), L2TP (1701), WireGuard (51820). Others: DNS,
+#   DNS over QUIC, TFTP, rpcbind, NTP, SNMP and its traps, CLDAP, QUIC, IPMI,
+#   MS-SQL browser, RADIUS, syslog, RIP, NFS, SSDP, RDP, mDNS, NAT-PMP,
+#   Ubiquiti discovery, memcached. Amplification classics: echo, qotd,
+#   chargen, SLP, Apple Remote Desktop, WS-Discovery, CoAP, DVR (37810),
+#   BACnet. Many of them can be abused for traffic amplification when they
+#   answer from the Internet.
 # udp_ports 53,123,161,500,4500,51820
+#
+# udp_ports_extra <port,port,...>
+#   UDP ports added to udp_ports, for a service of this site only. Several
+#   lines add up. With "udp_ports none", only these ports are scanned.
+# udp_ports_extra 9987,27015
 #
 # sensitive_ports <port,port,...> | none
 #   TCP ports that are risky when open to the Internet: remote access, admin
 #   web interfaces, databases, file sharing. Each one found open is a finding
 #   ("sensitive/<port>"), every month, until it is closed or accepted.
-#   Default: 21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,
-#   6443,8006,8443,9090,9200,9443,10000,11211,27017
+#   Default: 21,23,135,139,445,902,1433,2082,2083,2086,2087,2222,2375,2376,
+#   2379,2380,3306,3389,4848,5000,5001,5432,5601,5900,5901,5985,5986,6379,
+#   6443,7001,8006,8007,8161,8291,8443,8728,8729,8834,8880,9000,9090,9200,
+#   9443,9990,10000,10250,11211,15672,19999,20000,27017
+#   Web admin panels: cPanel and WHM (2082, 2083, 2086, 2087), DirectAdmin
+#   (2222), Plesk (8443, 8880), Proxmox VE and Backup Server (8006, 8007),
+#   Cockpit (9090), Portainer (9000, 9443), Webmin and Usermin (10000, 20000),
+#   Synology DSM (5000, 5001), Netdata (19999), Kibana (5601), Nessus (8834),
+#   RabbitMQ (15672), ActiveMQ (8161), Java servers (4848, 7001, 9990).
+#   Remote management: VMware ESXi (902), WinRM (5985, 5986), MikroTik
+#   (8291, 8728, 8729), Kubernetes and etcd (2379, 2380, 6443, 10250).
 # sensitive_ports 22,3389,9090
 #
 # kuma_url <url>
@@ -70,7 +90,7 @@ keep_months 12
 # web_scan on
 #
 # pdf_report on | off
-#   Also writes REPORT.pdf for each target, in English, to send to
+#   Also writes REPORT_<name>_<date>.pdf for each target, in English, to send to
 #   the owner of the address. It says who scanned, when, what and how, with
 #   the findings and the SHA-256 of every raw result. A PDF that fails is
 #   noted in SUMMARY.txt and scan.log, it never changes the status.

@@ -200,11 +200,13 @@ results/2026-11-01/
   SUMMARY.txt                     one line per address, read this first
   scan.log                        what ran and when, tool errors
   203.0.113.10_firewall.example.com/
-    REPORT.txt                    the report for this address
-    REPORT.pdf                    the report for the owner, when pdf_report is on
-    report.json                   the data of REPORT.pdf, when pdf_report is on
+    REPORT_firewall.example.com_2026-11-01.txt
+                                  the report for this address
+    REPORT_firewall.example.com_2026-11-01.pdf
+                                  the report for the owner, when pdf_report is on
+    report.json                   the data of the PDF, when pdf_report is on
     nmap.txt  nmap.xml            full nmap output
-    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, unless udp_ports is none
+    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, unless no UDP port is set
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output
@@ -258,8 +260,9 @@ Results older than `keep_months` are deleted after each successful scan.
 
 ### PDF report for the owner
 
-Set `pdf_report on` in the config to also get a `REPORT.pdf` in English per
-address, to send to its owner. The report says who ran the scan, from which
+Set `pdf_report on` in the config to also get a `REPORT_<name>_<date>.pdf` in English per
+address, to send to its owner. `<name>` is the first word of the target
+label, or the IP without a label. The report says who ran the scan, from which
 machine, when it started and ended, and what was tested. Then it gives what
 changed, the findings to fix, the accepted risks, the open ports with how nmap
 identified each service, the TLS services with the tests testssl could not
@@ -269,9 +272,9 @@ A technical annex gives the rest of the data: the nmap command and the tool
 versions, every known attack testssl tested with its result, its LOW and
 MEDIUM results except the ones per cipher suite, each certificate, the SSH
 algorithms with the host key fingerprint and the notes of ssh-audit, what
-nuclei ran, the CVEs by version on TCP ports like `REPORT.txt`, and the
+nuclei ran, the CVEs by version on TCP ports like the text report, and the
 SHA-256 of every file of the target folder, except `report.json` and
-`REPORT.pdf`. A section with nothing in it says "None.", so an empty result
+the PDF. A section with nothing in it says "None.", so an empty result
 never looks like a check that did not run. The annex also says what is not in
 the PDF: the testssl results rated INFO or OK apart from the attacks tested,
 and its results per cipher suite. They stay in the raw files, which are kept
@@ -300,7 +303,7 @@ PDF can be rendered again by hand:
 ```
 tools/typst/typst compile --root / --ignore-system-fonts \
     --input data=$PWD/results/<date>/<target>/report.json \
-    report.typ /tmp/REPORT.pdf
+    report.typ /tmp/report.pdf
 ```
 
 ## Uptime Kuma (optional)
@@ -333,7 +336,7 @@ sudo -u external-scan /var/lib/external-scan/external-scan \
   vulners.com. Its matches use the version string only, so backported distro
   fixes show up as false positives. They do not change the status.
 - All TCP ports are scanned, but only a short list of UDP ports (DNS, NTP,
-  SNMP, VPN, QUIC, telephony...), set by `udp_ports`. A full UDP scan would take
+  SNMP, VPN, QUIC, telephony...), set by `udp_ports` and `udp_ports_extra`. A full UDP scan would take
   about 18 hours. The UDP scan needs the raw socket right, so it only runs
   through systemd. Run by hand, the report says it was skipped.
 

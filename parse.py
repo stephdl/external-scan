@@ -431,7 +431,7 @@ def web_sites(path, failed):
     return sites
 
 
-def checksums(path):
+def checksums(path, skip):
     files = []
     for root, dirs, names in os.walk(path):
         dirs.sort()
@@ -439,7 +439,7 @@ def checksums(path):
             full = os.path.join(root, name)
             relative = os.path.relpath(full, path)
             # Both are written from this data, after the hashes.
-            if relative in ("report.json", "REPORT.pdf"):
+            if relative in skip:
                 continue
             digest = hashlib.sha256()
             with open(full, "rb") as handle:
@@ -542,7 +542,7 @@ def report(path):
     data["nmap"] = nmap_details(path)
     services = port_services(data["ports"], data["nmap"]["services"])
     data["groups"] = group_findings(data["findings"], services)
-    # TCP only, like REPORT.txt.
+    # TCP only, like the text report.
     try:
         data["vulners"] = vulners_cves(os.path.join(path, "nmap.xml"))
         data["vulners_summary"] = vulners_summary(data["vulners"])
@@ -569,7 +569,7 @@ def report(path):
             table.append({"name": parts[2], "port": parts[3], "completed": False, "matches": [], "protocols": [],
                           "grade": "", "grade_severity": "", "subject": "", "trust": "", "trust_severity": "",
                           "expires": "", "days": ""})
-    data["files"] = checksums(path)
+    data["files"] = checksums(path, {"report.json", data.get("pdf", "")})
     # Bytes, so the output stays UTF-8 under the LC_ALL=C of the bash script.
     sys.stdout.buffer.write(json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8"))
 
