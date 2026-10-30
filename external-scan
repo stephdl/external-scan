@@ -602,7 +602,7 @@ write_report() {
             "CVEs matched on the version string only. Distro packages often fix them without changing the version, so check before acting. Not counted in the status. Details in nmap.txt." "${vulns[@]}"
         section "Notes" \
             "Skipped checks, tool errors and accept lines that match nothing." "${notes[@]}"
-    } >"$dir/REPORT.txt"
+    } >"$dir/$report.txt"
     [[ $PDF_REPORT == off ]] || write_pdf
 }
 
@@ -655,17 +655,19 @@ write_pdf() {
         rm -f "$dir/report.json"
     elif "$TYPST" compile --root / --ignore-system-fonts \
         --input data="$dir/report.json" \
-        "$TEMPLATE" "$dir/REPORT.pdf" </dev/null >/dev/null 2>>"$LOG"; then
+        "$TEMPLATE" "$dir/$report.pdf" </dev/null >/dev/null 2>>"$LOG"; then
         return
     fi
     log "[$ip] PDF report failed"
-    rm -f "$dir/REPORT.pdf"
+    rm -f "$dir/$report.pdf"
     pdf_failed=1
 }
 
 scan_target() {
     local ip=$1 label=$2
     local dir=$RUN_DIR/${ip}_${label//[^A-Za-z0-9._-]/_}
+    # The name and date stay in the file name, so a report sent on its own is still told apart.
+    local report=REPORT_${label//[^A-Za-z0-9._-]/_}_$TODAY
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
     local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total
@@ -792,8 +794,8 @@ scan_target() {
 }
 
 record() {
-    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/REPORT.txt%s' \
-        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}" \
+    SUMMARY+=("$(printf '%-9s %-45s %s new port(s), %s to look at, %s accept line(s) used  %s/%s.txt%s' \
+        "$status" "$ip ($label)" "$new_count" "${#attention[@]}" "${#accepted[@]}" "${dir##*/}" "$report" \
         "$( (( pdf_failed )) && echo "  PDF failed, see scan.log")")")
     case $status in
         ERROR) ANY_ERROR=1 ;;

@@ -439,7 +439,7 @@ def checksums(path):
             full = os.path.join(root, name)
             relative = os.path.relpath(full, path)
             # Both are written from this data, after the hashes.
-            if relative in ("report.json", "REPORT.pdf"):
+            if relative == "report.json" or (relative.startswith("REPORT_") and relative.endswith(".pdf")):
                 continue
             digest = hashlib.sha256()
             with open(full, "rb") as handle:
@@ -542,7 +542,7 @@ def report(path):
     data["nmap"] = nmap_details(path)
     services = port_services(data["ports"], data["nmap"]["services"])
     data["groups"] = group_findings(data["findings"], services)
-    # TCP only, like REPORT.txt.
+    # TCP only, like the text report.
     try:
         data["vulners"] = vulners_cves(os.path.join(path, "nmap.xml"))
         data["vulners_summary"] = vulners_summary(data["vulners"])
