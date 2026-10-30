@@ -670,7 +670,9 @@ scan_target() {
     local safe=${label//[^A-Za-z0-9._-]/_}
     local dir=$RUN_DIR/${ip}_$safe
     # The name and date stay in the file name, so a report sent on its own is still told apart.
-    local report=REPORT_${safe}_$TODAY
+    # Only the first word of the label, the rest is a free description.
+    local name=${label%% *}
+    local report=REPORT_${name//[^A-Za-z0-9._-]/_}_$TODAY
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
     local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total

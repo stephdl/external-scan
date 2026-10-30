@@ -260,8 +260,9 @@ Results older than `keep_months` are deleted after each successful scan.
 
 ### PDF report for the owner
 
-Set `pdf_report on` in the config to also get a `REPORT_<label>_<date>.pdf` in English per
-address, to send to its owner. The report says who ran the scan, from which
+Set `pdf_report on` in the config to also get a `REPORT_<name>_<date>.pdf` in English per
+address, to send to its owner. `<name>` is the first word of the target
+label, or the IP without a label. The report says who ran the scan, from which
 machine, when it started and ended, and what was tested. Then it gives what
 changed, the findings to fix, the accepted risks, the open ports with how nmap
 identified each service, the TLS services with the tests testssl could not
