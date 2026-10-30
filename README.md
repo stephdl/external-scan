@@ -206,7 +206,7 @@ results/2026-11-01/
                                   the report for the owner, when pdf_report is on
     report.json                   the data of the PDF, when pdf_report is on
     nmap.txt  nmap.xml            full nmap output
-    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, unless udp_ports is none
+    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, unless no UDP port is set
     ndiff.txt                     nmap diff with the previous scan
     testssl/                      full testssl.sh output per name and port
     ssh-audit_22.json             full ssh-audit output

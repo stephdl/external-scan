@@ -188,7 +188,8 @@ parse_config() {
                 ;;
             udp_ports_extra)
                 [[ ${#f[@]} -eq 2 && ${f[1]} != none ]] || die "line $n: udp_ports_extra needs a comma separated list"
-                UDP_PORTS_EXTRA=$(port_list "$n" "${f[1]}") || exit 1
+                list=$(port_list "$n" "${f[1]}") || exit 1
+                UDP_PORTS_EXTRA+=${UDP_PORTS_EXTRA:+,}$list
                 ;;
             kuma_url)
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^https?:// ]] || die "line $n: kuma_url needs an http(s) URL"
@@ -699,7 +700,7 @@ scan_target() {
         notes+=("UDP not scanned, it needs CAP_NET_RAW. Start the scan with systemctl.")
     else
         log "[$ip] nmap UDP started, ports $UDP_PORTS"
-        timeout 2h nmap -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
+        timeout 4h nmap -Pn -sU -sV --script vulners -p "$UDP_PORTS" --open --privileged \
             -oX "$dir/nmap-udp.xml" -oN "$dir/nmap-udp.txt" "$ip" </dev/null >/dev/null 2>>"$LOG"
         if python3 "$PARSE" ports "$dir/nmap-udp.xml" >>"$dir/ports.tsv" 2>>"$LOG"; then
             udp_done=1

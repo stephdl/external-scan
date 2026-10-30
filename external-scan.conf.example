@@ -50,9 +50,9 @@ keep_months 12
 # udp_ports 53,123,161,500,4500,51820
 #
 # udp_ports_extra <port,port,...>
-#   UDP ports added to udp_ports, for a service of this site only. With
-#   "udp_ports none", only these ports are scanned.
-# udp_ports_extra 8443,10000
+#   UDP ports added to udp_ports, for a service of this site only. Several
+#   lines add up. With "udp_ports none", only these ports are scanned.
+# udp_ports_extra 9987,27015
 #
 # sensitive_ports <port,port,...> | none
 #   TCP ports that are risky when open to the Internet: remote access, admin
