@@ -171,10 +171,10 @@ journalctl -u external-scan -f
 ```
 
 The journal only shows the start and the end. The details go to
-`results/<date>/scan.log`. Then read the summary:
+`results/<date>_<time>/scan.log`. `results/latest` points to the last finished run. Then read the summary:
 
 ```
-cat /var/lib/external-scan/results/$(date +%F)/SUMMARY.txt
+cat /var/lib/external-scan/results/latest/SUMMARY.txt
 ```
 
 A change in `external-scan.conf` needs no restart or reinstall. The next
@@ -193,16 +193,16 @@ falls back to a slower TCP connect scan.
 
 ## Read the results
 
-Every scan gets its own directory:
+Every scan gets its own directory, named after the day and the time it started:
 
 ```
-results/2026-11-01/
+results/2026-11-01_0312/
   SUMMARY.txt                     one line per address, read this first
   scan.log                        what ran and when, tool errors
   203.0.113.10_firewall.example.com/
-    REPORT_firewall.example.com_2026-11-01.txt
+    REPORT_firewall.example.com_2026-11-01_0312.txt
                                   the report for this address
-    REPORT_firewall.example.com_2026-11-01.pdf
+    REPORT_firewall.example.com_2026-11-01_0312.pdf
                                   the report for the owner, when pdf_report is on
     report.json                   the data of the PDF, when pdf_report is on
     nmap.txt  nmap.xml            full nmap output
@@ -260,7 +260,7 @@ Results older than `keep_months` are deleted after each successful scan.
 
 ### PDF report for the owner
 
-Set `pdf_report on` in the config to also get a `REPORT_<name>_<date>.pdf` in English per
+Set `pdf_report on` in the config to also get a `REPORT_<name>_<date>_<time>.pdf` in English per
 address, to send to its owner. `<name>` is the first word of the target
 label, or the IP without a label. The report says who ran the scan, from which
 machine, when it started and ended, and what was tested. Then it gives what
@@ -302,7 +302,7 @@ PDF can be rendered again by hand:
 
 ```
 tools/typst/typst compile --root / --ignore-system-fonts \
-    --input data=$PWD/results/<date>/<target>/report.json \
+    --input data=$PWD/results/<date>_<time>/<target>/report.json \
     report.typ /tmp/report.pdf
 ```
 
