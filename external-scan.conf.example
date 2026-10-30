@@ -71,12 +71,6 @@ keep_months 12
 #   (8291, 8728, 8729), Kubernetes and etcd (2379, 2380, 6443, 10250).
 # sensitive_ports 22,3389,9090
 #
-# kuma_url <url>
-#   Optional. URL of an Uptime Kuma "Push" monitor. After each scan the script
-#   sends "up" when the status is OK, "down" otherwise.
-#   The URL contains a secret token: it is never written to the logs.
-# kuma_url https://kuma.example.com/api/push/XXXXXXXXXX
-#
 # web_scan on | off
 #   Runs nuclei, a web vulnerability scanner, on every "https" line of every
 #   target. It finds outdated applications behind a reverse proxy, exposed

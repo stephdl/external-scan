@@ -28,7 +28,6 @@ UDP_PORTS=7,17,19,53,67,69,88,111,123,137,138,161,162,389,427,443,464,500,514,52
 UDP_PORTS_EXTRA=
 # Remote access, admin web interfaces, databases and file sharing: risky when open to the Internet.
 SENSITIVE_PORTS=21,23,135,139,445,902,1433,2082,2083,2086,2087,2222,2375,2376,2379,2380,3306,3389,4848,5000,5001,5432,5601,5900,5901,5985,5986,6379,6443,7001,8006,8007,8161,8291,8443,8728,8729,8834,8880,9000,9090,9200,9443,9990,10000,10250,11211,15672,19999,20000,27017
-KUMA_URL=
 WEB_SCAN=off
 PDF_REPORT=off
 OPERATOR=
@@ -50,7 +49,6 @@ HAS_NET_RAW=0
 SUMMARY=()
 ANY_ERROR=0
 ANY_ATTENTION=0
-ANY_NEW_PORT=0
 
 usage() {
     cat <<EOF
@@ -67,18 +65,9 @@ log() {
     if [[ -n $LOG ]]; then echo "$line" >>"$LOG"; else echo "$line" >&2; fi
 }
 
-kuma_push() {
-    [[ -n $KUMA_URL ]] || return 0
-    # The push token is part of the URL, so curl reads it from stdin to keep it out of ps and logs.
-    curl -K - -fsS -m 20 -o /dev/null -G \
-        --data-urlencode "status=$1" --data-urlencode "msg=$2" --data-urlencode "ping=" \
-        <<<"url = \"$KUMA_URL\"" 2>/dev/null || log "Uptime Kuma push failed"
-}
-
 die() {
     log "ERROR: $*"
     [[ -z $LOG ]] || echo "external-scan: $*" >&2
-    kuma_push down "external-scan error: $*"
     exit 1
 }
 
@@ -194,11 +183,6 @@ parse_config() {
                 list=$(port_list "$n" "${f[1]}") || exit 1
                 UDP_PORTS_EXTRA+=${UDP_PORTS_EXTRA:+,}$list
                 ;;
-            kuma_url)
-                [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^https?:// ]] || die "line $n: kuma_url needs an http(s) URL"
-                # Kuma shows the URL with ?status=up&msg=OK&ping=, the script adds its own query.
-                KUMA_URL=${f[1]%%\?*}
-                ;;
             web_scan)
                 [[ ${#f[@]} -eq 2 && ${f[1]} =~ ^(on|off)$ ]] || die "line $n: web_scan needs 'on' or 'off'"
                 WEB_SCAN=${f[1]}
@@ -229,7 +213,6 @@ check_tools() {
     for tool in nmap ssh python3 timeout flock awk comm; do
         command -v "$tool" >/dev/null || die "missing command: $tool"
     done
-    [[ -z $KUMA_URL ]] || command -v curl >/dev/null || die "missing command: curl"
     [[ -x $TESTSSL ]] || die "testssl.sh not found at $TESTSSL, run install.sh"
     [[ -f $SSH_AUDIT ]] || die "ssh-audit not found at $SSH_AUDIT, run install.sh"
     if any_web_scan; then
@@ -754,10 +737,7 @@ scan_target() {
             [[ -n $p ]] || continue
             changes+=("GONE  $(port_line "$p" <<<"$prev_tsv")")
         done < <(comm -23 <(cut -f1 <<<"$prev_tsv" | sort) <(sort <<<"$cur_ports"))
-        if (( new_count )); then
-            flag
-            ANY_NEW_PORT=1
-        fi
+        (( new_count )) && flag
         if command -v ndiff >/dev/null; then
             ndiff "$prev" "$dir/nmap.xml" >"$dir/ndiff.txt" 2>>"$LOG"
         fi
@@ -888,16 +868,6 @@ main() {
     ln -sfnT "$RUN_ID" "$OUTPUT/latest" 2>>"$LOG" || log "cannot update $OUTPUT/latest"
 
     (( ANY_ERROR )) || prune_old
-
-    if (( ANY_ERROR )); then
-        kuma_push down "external-scan $RUN_ID: scan error, see SUMMARY.txt"
-    elif (( ANY_NEW_PORT )); then
-        kuma_push down "external-scan $RUN_ID: new open port, see SUMMARY.txt"
-    elif (( ANY_ATTENTION )); then
-        kuma_push down "external-scan $RUN_ID: findings to look at, see SUMMARY.txt"
-    else
-        kuma_push up "external-scan $RUN_ID: $global"
-    fi
 
     log "finished, status $global"
     echo "external-scan: finished, status $global, see $RUN_DIR/SUMMARY.txt"
