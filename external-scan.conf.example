@@ -150,7 +150,8 @@ keep_months 12
 #   Accepts a known risk on the IP of the block above, so it stops raising
 #   the status every month. The report still lists it under "Accepted risks"
 #   with the reason, and it comes back in "Needs attention" after the date.
-#   An accept line that matches nothing is reported, so it can be removed.
+#   An accept line that matches nothing is noted in the report, so it can be
+#   removed.
 #   <key pattern>  The key of a finding, as printed in the report. Each
 #                  report ends with ready-to-copy accept lines. "*" matches
 #                  anything, so one line can cover the same finding on many
@@ -163,6 +164,11 @@ keep_months 12
 #                    sensitive/<port>                       sensitive port open
 #                    dns/<name>                             name not on this IP
 #                    web/<name>/<port>/<template id>        nuclei finding
+#                    failed/tls/<name or ip>/<port>         testssl failed
+#                    failed/ssh/<port>                      ssh-audit failed
+#                    failed/sshpw/<port>                    SSH login check failed
+#                    failed/web/<name>/<port>               nuclei failed
+#                    failed/udp                             UDP scan failed
 #   <YYYY-MM-DD>   Required. Review the risk again at that date, at most a
 #                  year ahead is a good habit.
 #   <reason>       Free text: why the risk is accepted, or what mitigates it.
