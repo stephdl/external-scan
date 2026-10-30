@@ -17,6 +17,8 @@ TEMPLATE=$BASE/report.typ
 # nuclei keeps its config and templates under $HOME, the scan user can only write here.
 NUCLEI_HOME=$BASE/cache/nuclei
 TODAY=$(date +%F)
+# One folder per run, so a second scan on the same day keeps the first one.
+RUN_ID=${TODAY}_$(date +%H%M)
 
 CERT_WARN_DAYS=30
 KEEP_MONTHS=12
@@ -296,10 +298,11 @@ port_is_open() {
 
 find_previous() {
     local ip=$1 i day xml
-    local -a days=("$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])
+    # Also matches the folders named after the day only, written before the time was added.
+    local -a days=("$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*)
     for (( i = ${#days[@]} - 1; i >= 0; i-- )); do
         day=${days[i]}
-        [[ -d $day && ${day##*/} != "$TODAY" ]] || continue
+        [[ -d $day && ${day##*/} != "$RUN_ID" ]] || continue
         for xml in "$day/${ip}"_*/nmap.xml; do
             if [[ -f $xml ]] && python3 "$PARSE" ports "$xml" >/dev/null 2>&1; then
                 echo "$xml"
@@ -672,7 +675,7 @@ scan_target() {
     # The name and date stay in the file name, so a report sent on its own is still told apart.
     # Only the first word of the label, the rest is a free description.
     local name=${label%% *}
-    local report=REPORT_${name//[^A-Za-z0-9._-]/_}_$TODAY
+    local report=REPORT_${name//[^A-Za-z0-9._-]/_}_$RUN_ID
     local status=OK prev="" prev_date="" prev_tsv="" prev_udp="" cur_ports="" covered=" " dns_done=" "
     local new_count=0 udp_done=0 failures=0 tested=" " ssh_ports="" web_ran=0 pdf_failed=0 nmap_done=0
     local started c cip mode fqdn port p svc tunnel high max total
@@ -681,7 +684,10 @@ scan_target() {
     started=$(date +%s)
     # Before nmap, so a report on a failed nmap still names the previous scan.
     prev=$(find_previous "$ip")
-    [[ -z $prev ]] || prev_date=$(basename "$(dirname "$(dirname "$prev")")")
+    if [[ -n $prev ]]; then
+        prev_date=$(basename "$(dirname "$(dirname "$prev")")")
+        [[ $prev_date != *_* ]] || prev_date="${prev_date%_*} ${prev_date:11:2}:${prev_date:13:2}"
+    fi
 
     mkdir -p "$dir/testssl"
     log "[$ip] nmap started, $SCAN_TYPE, all TCP ports"
@@ -811,8 +817,8 @@ record() {
 prune_old() {
     local cutoff day
     cutoff=$(date -d "-$KEEP_MONTHS months" +%F)
-    for day in "$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]; do
-        [[ -d $day && ${day##*/} < $cutoff ]] || continue
+    for day in "$OUTPUT"/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*; do
+        [[ -d $day && ${day:${#OUTPUT}+1:10} < $cutoff ]] || continue
         rm -rf -- "$day"
         log "removed old results ${day##*/}"
     done
@@ -838,10 +844,11 @@ main() {
     exec 9>"$OUTPUT/.lock"
     flock -n 9 || die "another scan is already running"
 
-    RUN_DIR=$OUTPUT/$TODAY
-    # A second run on the same day replaces the first one.
+    RUN_DIR=$OUTPUT/$RUN_ID
+    # Only a second run in the same minute replaces the first one.
     [[ ! -d $RUN_DIR ]] || rm -rf -- "$RUN_DIR"
     mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
+    ln -sfn "$RUN_ID" "$OUTPUT/latest"
     LOG=$RUN_DIR/scan.log
 
     NMAP_ARGS=(-Pn -sV --script vulners -p- --open)
@@ -863,7 +870,7 @@ main() {
     (( ANY_ATTENTION )) && global=ATTENTION
     (( ANY_ERROR )) && global=ERROR
     {
-        echo "External scan summary, $TODAY"
+        echo "External scan summary, $TODAY ${RUN_ID:11:2}:${RUN_ID:13:2}"
         echo "Overall status: $global"
         echo
         printf '%s\n' "${SUMMARY[@]}"
