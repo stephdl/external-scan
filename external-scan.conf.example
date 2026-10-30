@@ -58,8 +58,17 @@ keep_months 12
 #   TCP ports that are risky when open to the Internet: remote access, admin
 #   web interfaces, databases, file sharing. Each one found open is a finding
 #   ("sensitive/<port>"), every month, until it is closed or accepted.
-#   Default: 21,23,135,139,445,1433,2375,2376,3306,3389,5432,5900,5901,6379,
-#   6443,8006,8443,9090,9200,9443,10000,11211,27017
+#   Default: 21,23,135,139,445,902,1433,2082,2083,2086,2087,2222,2375,2376,
+#   2379,2380,3306,3389,4848,5000,5001,5432,5601,5900,5901,5985,5986,6379,
+#   6443,7001,8006,8007,8161,8291,8443,8728,8729,8834,8880,9000,9090,9200,
+#   9443,9990,10000,10250,11211,15672,19999,20000,27017
+#   Web admin panels: cPanel and WHM (2082, 2083, 2086, 2087), DirectAdmin
+#   (2222), Plesk (8443, 8880), Proxmox VE and Backup Server (8006, 8007),
+#   Cockpit (9090), Portainer (9000, 9443), Webmin and Usermin (10000, 20000),
+#   Synology DSM (5000, 5001), Netdata (19999), Kibana (5601), Nessus (8834),
+#   RabbitMQ (15672), ActiveMQ (8161), Java servers (4848, 7001, 9990).
+#   Remote management: VMware ESXi (902), WinRM (5985, 5986), MikroTik
+#   (8291, 8728, 8729), Kubernetes and etcd (2379, 2380, 6443, 10250).
 # sensitive_ports 22,3389,9090
 #
 # kuma_url <url>
