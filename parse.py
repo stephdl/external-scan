@@ -27,8 +27,8 @@ def key_part(text):
 
 
 def check_ip(value):
-    # ip_address() rejects ranges and host names, which nmap would happily expand.
-    print(ipaddress.ip_address(value).compressed)
+    # IPv6 is refused until this script passes -6 to nmap, testssl.sh and ssh-audit.
+    print(ipaddress.IPv4Address(value).compressed)
 
 
 def resolve(name):

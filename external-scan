@@ -157,8 +157,8 @@ parse_config() {
         case ${f[0]} in
             target)
                 (( ${#f[@]} >= 2 )) || die "line $n: expected 'target <ip> [label]'"
-                ip=$(python3 "$PARSE" check-ip "${f[1]}" 2>/dev/null) \
-                    || die "line $n: '${f[1]}' is not a single IP address (no range, no host name)"
+                ip=$(python3 "$PARSE" check-ip "${f[1]}" 2>&1) \
+                    || die "line $n: '${f[1]}' is not a single IPv4 address (${ip#parse.py check-ip: })"
                 is_target "$ip" && die "line $n: $ip is listed twice"
                 label="${f[*]:2}"
                 TARGET_IPS+=("$ip")
