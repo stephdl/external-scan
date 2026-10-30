@@ -100,7 +100,7 @@ keep_months 12
 # ---------------------------------------------------------------------------
 #
 # target <ip> <label>
-#   <ip>     ONE IPv4 or IPv6 address. Ranges (10.0.0.0/24, 10.0.0.1-20) and
+#   <ip>     ONE IPv4 address. IPv6, ranges (10.0.0.0/24, 10.0.0.1-20) and
 #            host names are refused. This is the ONLY address the scan ever
 #            connects to for this block: nmap, ssh-audit and testssl.sh all
 #            use it.
