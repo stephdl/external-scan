@@ -152,8 +152,10 @@ systemctl start external-scan.service
 ```
 
 This returns when the scan ends: a few minutes to over an hour per address.
-A second start meanwhile stops with "another scan is already running". To get
-the prompt back and follow it:
+A second start while a scan runs does nothing: systemd joins the running one.
+Started directly, the script stops with "another scan is already running".
+
+To get the prompt back and follow it:
 
 ```
 systemctl start --no-block external-scan.service
