@@ -61,7 +61,7 @@ As root. The same commands install or update to the current release:
 [ -d /var/lib/external-scan ] || git clone https://github.com/stephdl/external-scan.git /var/lib/external-scan
 cd /var/lib/external-scan
 git fetch --tags
-git checkout -q 1.0.4
+git checkout -q 1.0.5
 ./install.sh
 ```
 
