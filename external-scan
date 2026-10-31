@@ -879,7 +879,7 @@ main() {
 
     (( ANY_ATTENTION )) && global=ATTENTION
     (( ANY_ERROR )) && global=ERROR
-    [[ -z $NEWER_VERSION ]] || update="external-scan $NEWER_VERSION is available, this scan ran $SCAN_VERSION. Run git pull and install.sh."
+    [[ -z $NEWER_VERSION ]] || update="external-scan $NEWER_VERSION is available, this scan ran $SCAN_VERSION. See https://github.com/stephdl/external-scan#install"
     {
         echo "External scan summary, $(run_time "$RUN_ID")"
         echo "Overall status: $global"

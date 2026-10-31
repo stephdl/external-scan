@@ -1,0 +1,31 @@
+name: release
+
+on:
+  push:
+    tags: ['[0-9]*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A release created from the GitHub UI already exists.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes
+      - name: Point the README install command to this release
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+          sed -i -E "s#^(git checkout -q )[0-9]+\.[0-9]+\.[0-9]+\$#\1${GITHUB_REF_NAME}#" README.md
+          git diff --quiet README.md && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: install ${GITHUB_REF_NAME}" README.md
+          git push origin main
