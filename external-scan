@@ -39,6 +39,9 @@ NUCLEI_READY=0
 NUCLEI_NOTE=
 NUCLEI_TEMPLATES=
 VERSIONS=()
+SCAN_VERSION=
+NEWER_VERSION=
+NEWER_UPDATE=
 CHECKS=()
 ACCEPTS=()
 LOG=
@@ -224,9 +227,23 @@ check_tools() {
     fi
 }
 
+# Sets NEWER_VERSION when GitHub has a release tag above the one checked out here.
+check_newer_version() {
+    local current latest
+    current=$(git -c safe.directory="$BASE" -C "$BASE" describe --tags --abbrev=0 2>/dev/null)
+    if ! latest=$(timeout 30 git -c safe.directory="$BASE" -C "$BASE" ls-remote --tags --refs origin 2>>"$LOG" \
+        | sed -n 's|.*refs/tags/\([0-9]*\.[0-9]*\.[0-9]*\)$|\1|p' | sort -V | tail -1) || [[ -z $latest ]]; then
+        log "cannot list the release tags on GitHub, no update check"
+        return
+    fi
+    if [[ -n $current && $latest != "$current" && $(printf '%s\n' "$current" "$latest" | sort -V | tail -1) == "$latest" ]]; then
+        NEWER_VERSION=$latest
+    fi
+}
+
 # Tool versions for the "how" part of the PDF report.
 tool_versions() {
-    VERSIONS+=("external-scan"$'\t'"$(git -c safe.directory="$BASE" -C "$BASE" describe --tags --always --dirty 2>/dev/null)")
+    VERSIONS+=("external-scan"$'\t'"$SCAN_VERSION${NEWER_VERSION:+ ($NEWER_VERSION available)}")
     VERSIONS+=("nmap"$'\t'"$(nmap --version 2>/dev/null | awk 'NR == 1 {print $3}')")
     VERSIONS+=("testssl.sh"$'\t'"$(sed -n 's/^declare -r VERSION="\(.*\)"$/\1/p' "$TESTSSL" | head -1)")
     VERSIONS+=("ssh-audit"$'\t'"$(sed -n "s/^VERSION = '\(.*\)'$/\1/p" "${SSH_AUDIT%/*}/src/ssh_audit/globals.py")")
@@ -828,7 +845,7 @@ main() {
     (( EUID != 0 )) || die "refusing to run as root, run it as the external-scan user"
     parse_config
     check_tools
-    [[ $PDF_REPORT == off ]] || tool_versions
+    SCAN_VERSION=$(git -c safe.directory="$BASE" -C "$BASE" describe --tags --always --dirty 2>/dev/null)
 
     mkdir -p "$OUTPUT" || die "cannot create $OUTPUT"
     exec 9>"$OUTPUT/.lock"
@@ -839,6 +856,8 @@ main() {
     [[ ! -d $RUN_DIR ]] || rm -rf -- "$RUN_DIR"
     mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
     LOG=$RUN_DIR/scan.log
+    check_newer_version
+    [[ $PDF_REPORT == off ]] || tool_versions
 
     NMAP_ARGS=(-Pn -sV --script vulners -p- --open)
     if has_net_raw; then
@@ -850,17 +869,19 @@ main() {
         SCAN_TYPE="TCP connect scan (no CAP_NET_RAW)"
     fi
 
-    echo "external-scan: started, ${#TARGET_IPS[@]} target(s), results in $RUN_DIR"
-    log "started, ${#TARGET_IPS[@]} target(s), $SCAN_TYPE"
+    echo "external-scan $SCAN_VERSION: started, ${#TARGET_IPS[@]} target(s), results in $RUN_DIR"
+    log "external-scan $SCAN_VERSION started, ${#TARGET_IPS[@]} target(s), $SCAN_TYPE"
     for i in "${!TARGET_IPS[@]}"; do
         scan_target "${TARGET_IPS[i]}" "${TARGET_LABELS[i]}"
     done
 
     (( ANY_ATTENTION )) && global=ATTENTION
     (( ANY_ERROR )) && global=ERROR
+    NEWER_UPDATE="external-scan $SCAN_VERSION, $NEWER_VERSION is available. Run git pull and install.sh."
     {
         echo "External scan summary, $(run_time "$RUN_ID")"
         echo "Overall status: $global"
+        [[ -z $NEWER_VERSION ]] || echo "$NEWER_UPDATE"
         echo
         printf '%s\n' "${SUMMARY[@]}"
     } >"$RUN_DIR/SUMMARY.txt"
@@ -869,6 +890,7 @@ main() {
 
     (( ANY_ERROR )) || prune_old
 
+    [[ -z $NEWER_VERSION ]] || { log "$NEWER_UPDATE"; echo "external-scan: $NEWER_UPDATE"; }
     log "finished, status $global"
     echo "external-scan: finished, status $global, see $RUN_DIR/SUMMARY.txt"
     (( ! ANY_ERROR ))
