@@ -55,9 +55,14 @@ shows fewer open ports than there are.
 Everything lives in `/var/lib/external-scan`: the git clone, the home of the
 `external-scan` system user, the config, the tools and the results.
 
+As root. The same commands install or update to the current release:
+
 ```
-git clone https://github.com/stephdl/external-scan.git /var/lib/external-scan
-/var/lib/external-scan/install.sh
+[ -d /var/lib/external-scan ] || git clone https://github.com/stephdl/external-scan.git /var/lib/external-scan
+cd /var/lib/external-scan
+git fetch --tags
+git checkout -q 1.0.3
+./install.sh
 ```
 
 `install.sh` works on Debian, Ubuntu, Rocky and Fedora, and is safe to run
@@ -66,7 +71,9 @@ pinned tools into `tools/`, creates `external-scan.conf` from the example if
 missing, and copies the systemd units to `/etc/systemd/system`. It does not
 enable the timer.
 
-To update: `git pull` in `/var/lib/external-scan`, then `install.sh` again.
+Your `external-scan.conf` and the results are not in git, an update keeps
+them. If `install.sh` fails on a package repository, the code is still
+updated: run it again later.
 
 ## Configure
 
