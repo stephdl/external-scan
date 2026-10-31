@@ -877,7 +877,7 @@ main() {
 
     (( ANY_ATTENTION )) && global=ATTENTION
     (( ANY_ERROR )) && global=ERROR
-    NEWER_UPDATE="external-scan $SCAN_VERSION, $NEWER_VERSION is available. Run git pull and install.sh."
+    NEWER_UPDATE="external-scan $NEWER_VERSION is available, this scan ran $SCAN_VERSION. Run git pull and install.sh."
     {
         echo "External scan summary, $(run_time "$RUN_ID")"
         echo "Overall status: $global"
@@ -890,7 +890,7 @@ main() {
 
     (( ANY_ERROR )) || prune_old
 
-    [[ -z $NEWER_VERSION ]] || { log "$NEWER_UPDATE"; echo "external-scan: $NEWER_UPDATE"; }
+    [[ -z $NEWER_VERSION ]] || { log "$NEWER_UPDATE"; echo "$NEWER_UPDATE"; }
     log "finished, status $global"
     echo "external-scan: finished, status $global, see $RUN_DIR/SUMMARY.txt"
     (( ! ANY_ERROR ))
