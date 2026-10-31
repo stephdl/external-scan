@@ -347,3 +347,7 @@ systemctl daemon-reload
 rm -rf /var/lib/external-scan
 userdel external-scan
 ```
+
+## License
+
+GPL-3.0, see [LICENSE](LICENSE).
