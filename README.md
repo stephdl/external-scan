@@ -33,6 +33,10 @@ the tools, ndiff to compare two nmap scans when the distribution ships it.
 Pinned versions are at the top of `install.sh`. Each PDF prints the versions
 that ran.
 
+Each scan asks GitHub for the release tags. When a newer one exists,
+`SUMMARY.txt`, the journal and the tools list of the PDF say so. Without
+access to GitHub the check is skipped, with a line in `scan.log`.
+
 ## Before you scan
 
 **Get written permission from the owner of every address.** List only those
