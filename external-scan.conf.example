@@ -14,13 +14,22 @@
 # EXAMPLE
 # ===========================================================================
 #
-# A firewall that forwards web and mail to a server behind it, then a router
-# with no name to test. Remove the "# " at the start of each line to use it.
-# Global settings have no indentation, the lines under a target do.
+# Four targets, each showing a different use. Remove the "# " at the start of
+# each line to use it. Global settings have no indentation, the lines under a
+# target do.
+#
+# Every open port of every target is found and tested, whether you name it or
+# not. A name adds what the IP alone cannot give: the real certificate of a
+# site behind a reverse proxy, a check that the name resolves to the IP, and
+# the nuclei web scan. Name every service you know of.
 #
 # pdf_report on
 # operator "Jane Doe, Example IT"
 #
+# # 1. A firewall that forwards web and mail to a server behind it, by NAT.
+# #    Each site is named, so the reverse proxy shows its own certificate.
+# #    The owner allowed a vulnerability scan, so nuclei runs on both sites.
+# #    The firewall GUI on 9090 is a known risk, accepted until a VPN exists.
 # target 203.0.113.10 firewall.example.com
 #   authorization "purchase order 2026-042, signed by J. Smith"
 #   web_scan on
@@ -33,11 +42,31 @@
 #   tls   mail.example.com  993
 #   accept sensitive/9090 until 2027-06-30 "firewall GUI, VPN planned"
 #
+# # 2. An office router with no name to test. Every open port is still found
+# #    and tested on the IP alone: TLS ports with testssl.sh, SSH with
+# #    ssh-audit, and any sensitive port, like the router admin page, is
+# #    reported.
 # target 198.51.100.20 office router
 #   authorization "purchase order 2026-042, signed by J. Smith"
 #
-# The router block has no name to test. Its open ports are still found and
-# tested on the IP alone, see "What a target line alone does" below.
+# # 3. A cloud server where only the web site is named. If it also has SSH on
+# #    22 and SMTP on 25, nmap finds them, ssh-audit checks 22 and testssl.sh
+# #    checks 25 through STARTTLS, on the IP alone. No web_scan line, so
+# #    nuclei does not run: the global default is off.
+# target 192.0.2.30 cloud server
+#   authorization "purchase order 2026-042, signed by J. Smith"
+#   https shop.example.com 443
+#
+# # 4. A directory and mail server. The permission covers a port and TLS scan
+# #    only. LDAPS on 636 has no mode of its own, so "tls" tests it. HTTP
+# #    compression is needed on the webmail, so BREACH is accepted on every
+# #    name and port of this target.
+# target 192.0.2.40 ldap and mail server
+#   authorization "email from J. Smith, 2026-09-20, no vulnerability scan"
+#   tls   ldap.example.com    636
+#   https webmail.example.com 443
+#   smtp  mx.example.com      25
+#   accept tls/*/*/BREACH until 2027-06-30 "HTTP compression needed, no secret in responses"
 #
 # ===========================================================================
 # GLOBAL SETTINGS (all optional, no indentation)
