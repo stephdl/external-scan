@@ -1,84 +1,73 @@
 # external-scan
 
-A small monthly scan of what a network exposes to the Internet. It runs from a
-VPS outside the network, against a fixed list of public IP addresses.
+A monthly scan of what a network exposes to the Internet. It runs from a VPS
+outside the network, against a fixed list of public IP addresses.
 
 For each address it:
 
-1. finds every open TCP port with nmap, and the service behind it,
+1. finds every open TCP port and its service with nmap,
 2. compares the open ports with the previous scan,
 3. checks certificates and TLS settings with testssl.sh,
 4. checks SSH settings with ssh-audit,
-5. scans each web site name with nuclei, when `web_scan` is on,
-6. writes a short plain text report, and a PDF for the owner when `pdf_report` is on.
+5. scans each named web site with nuclei, when `web_scan` is on,
+6. writes a plain text report, and a PDF for the owner when `pdf_report` is on.
 
 ## Software used
 
-The scan relies on free software. `install.sh` installs all of it.
+`install.sh` installs everything.
 
-| Software | What it does here | Comes from |
+| Software | Role | Source |
 |---|---|---|
-| [nmap](https://nmap.org) | finds the open TCP and UDP ports and the service behind each | distribution package |
-| [vulners](https://github.com/vulnersCom/nmap-vulners) | nmap script that lists known CVEs for the version a service announces | shipped with nmap |
-| [testssl.sh](https://testssl.sh) | checks certificates, protocols, ciphers and known TLS attacks | git clone, pinned tag |
-| [ssh-audit](https://github.com/jtesta/ssh-audit) | checks SSH algorithms and known SSH CVEs | git clone, pinned tag |
-| OpenSSH client | asks an SSH server which login methods it accepts, without trying any | distribution package |
-| [nuclei](https://github.com/projectdiscovery/nuclei) | looks for known web flaws with its critical and high templates | release binary, SHA-256 checked |
-| [typst](https://typst.app) | renders the PDF report | release binary, SHA-256 checked |
-| python3 | reads the tool results and writes the reports | distribution package |
-| bash | runs the scan | distribution package |
-| systemd | runs the scan monthly as an unprivileged user with the raw socket right | distribution package |
+| [nmap](https://nmap.org) | open TCP and UDP ports and their services | distribution package |
+| [vulners](https://github.com/vulnersCom/nmap-vulners) | known CVEs for each announced version | shipped with nmap |
+| [testssl.sh](https://testssl.sh) | certificates, protocols, ciphers, known TLS attacks | git clone, pinned tag |
+| [ssh-audit](https://github.com/jtesta/ssh-audit) | SSH algorithms and known SSH CVEs | git clone, pinned tag |
+| OpenSSH client | asks which SSH login methods are accepted, without trying any | distribution package |
+| [nuclei](https://github.com/projectdiscovery/nuclei) | known web flaws, critical and high templates | release binary, SHA-256 checked |
+| [typst](https://typst.app) | renders the PDF | release binary, SHA-256 checked |
+| python3, bash | run the scan and write the reports | distribution package |
+| systemd | monthly run, unprivileged user with the raw socket right | distribution package |
 
-Helpers: socat, openssl, dig and hexdump for testssl.sh, git to fetch and
-update the cloned tools, curl to download them, and ndiff to compare two nmap
-scans when the distribution ships it.
-
-The pinned versions are at the top of `install.sh`. Each PDF report prints the
-versions that ran the scan.
+Helpers: socat, openssl, dig and hexdump for testssl.sh, git and curl to fetch
+the tools, ndiff to compare two nmap scans when the distribution ships it.
+Pinned versions are at the top of `install.sh`. Each PDF prints the versions
+that ran.
 
 ## Before you scan
 
-**Get written permission from the owner of every address you scan.** Only
-list those addresses in the config. The script refuses ranges, host names and
-IPv6 addresses, and never connects to an address that is not in the config.
+**Get written permission from the owner of every address.** List only those
+addresses. Ranges, host names and IPv6 are refused, and the scan never
+connects to an address outside the config.
 
-**The nuclei web scan is a vulnerability scan, not a port scan.** It stays off
-until `web_scan on` is set. Turn it on only for owners whose written
-permission covers a vulnerability scan.
+**nuclei is a vulnerability scan, not a port scan.** It stays off until
+`web_scan on`. Turn it on only when the permission covers it.
 
-**Ask the owner to whitelist the IP of the scanning VPS** in CrowdSec, the
-firewall IDS (Suricata on OPNsense, for example), fail2ban or anything similar.
-Otherwise the scan gets blocked halfway and the report shows fewer open ports
-than there really are.
+**Ask the owner to whitelist the VPS IP** in CrowdSec, the IDS (Suricata on
+OPNsense...), fail2ban or similar. Otherwise the scan gets blocked halfway and
+shows fewer open ports than there are.
 
 ## Install
 
-Everything lives in one directory: `/var/lib/external-scan`. It is the git
-clone, the home of the `external-scan` system user, and the place for the
-config, the tools and the results.
+Everything lives in `/var/lib/external-scan`: the git clone, the home of the
+`external-scan` system user, the config, the tools and the results.
 
 ```
 git clone https://github.com/stephdl/external-scan.git /var/lib/external-scan
 /var/lib/external-scan/install.sh
 ```
 
-`install.sh` works on Debian, Ubuntu, Rocky and Fedora. It is safe to run
-again. It does the following:
+`install.sh` works on Debian, Ubuntu, Rocky and Fedora, and is safe to run
+again. It installs the packages, creates the `external-scan` user, fetches the
+pinned tools into `tools/`, creates `external-scan.conf` from the example if
+missing, and copies the systemd units to `/etc/systemd/system`. It does not
+enable the timer.
 
-- installs nmap, python3 and the other packages,
-- creates the `external-scan` system user,
-- fetches pinned versions of testssl.sh, ssh-audit, nuclei and typst into `tools/`,
-- creates `external-scan.conf` from the example if it does not exist,
-- copies the systemd service and timer to `/etc/systemd/system`.
-
-It does not enable the timer.
-
-To update, run `git pull` in `/var/lib/external-scan`, then `install.sh` again.
+To update: `git pull` in `/var/lib/external-scan`, then `install.sh` again.
 
 ## Configure
 
-Edit `/var/lib/external-scan/external-scan.conf`. It is the only config file.
-The example in the file explains each line. A short version:
+Edit `/var/lib/external-scan/external-scan.conf`, the only config file. It
+never goes to git. `external-scan.conf.example` explains every line. In short:
 
 ```
 cert_warn_days 30
@@ -89,61 +78,65 @@ target 203.0.113.10 firewall.example.com
   web_scan on
   https cloud.example.com 443
   smtp  mail.example.com  587
-  imaps mail.example.com  993
+  tls   mail.example.com  993
 ```
 
-The modes are `https`, `smtps`, `imaps` and `pop3s` for TLS from the first
-byte, `smtp`, `imap` and `pop3` for STARTTLS, and `tls` for TLS from the first
-byte on any other protocol. `tls` also still works on the mail ports.
+Modes: `https` for web sites, `tls` for TLS from the first byte on any
+protocol (`smtps`, `imaps` and `pop3s` are aliases), and `smtp`, `imap`,
+`pop3` for STARTTLS.
 
-Every open port is scanned anyway. Without any indented line, testssl.sh
-still tests each port that nmap sees as SSL, and each SMTP, IMAP or POP3 port
-through STARTTLS, on the bare IP. The indented lines add a name to the test.
-A reverse proxy picks the certificate from the name, so without them you only
-see its default certificate.
+### What a name adds
+
+Every open port is found on the IP alone, with or without names. testssl.sh
+then tests each port nmap sees as TLS, and each SMTP, IMAP or POP3 port
+through STARTTLS. SSH gets ssh-audit and a password login check. Other ports,
+like plain HTTP on 80, are only listed, with their known CVEs.
+
+A name under the target adds three things:
+
+- the real certificate: a reverse proxy picks it from the name, so without
+  one you only see its default certificate,
+- a DNS check that the name resolves to the target IP,
+- nuclei, on `https` lines only, when `web_scan` is on.
+
+A port with a name is not tested again on the IP alone. A named port that is
+closed is skipped with a note. nuclei only speaks HTTPS: a site served in
+plain HTTP only cannot be web scanned.
 
 ### Web application scan
 
-Behind a reverse proxy nmap only sees the proxy, never the applications. When
-`web_scan` is on, nuclei scans every `https` line: outdated Nextcloud or
-Mattermost versions, exposed admin pages, files like `.git` or `.env`.
+Behind a reverse proxy nmap only sees the proxy. nuclei looks at the sites
+themselves: outdated Nextcloud or Mattermost, exposed admin pages, files like
+`.git` or `.env`. A global `web_scan` sets the default, and a `web_scan` line
+under a target overrides it.
 
-`web_scan off` at the start of the config turns it off for every target, and
-`web_scan on` under a target turns it on for that one only. The opposite works
-too.
+Limits:
 
-The scan stays safe for the target:
-
-- only templates rated critical or high, without the dos, intrusive and fuzz
-  tags,
+- critical and high templates only, without the dos, intrusive and fuzz tags,
 - at most 20 requests per second,
-- it connects to the target IP only, with the name in SNI and in the Host
-  header, and never follows a redirect,
-- no out-of-band test (interactsh), so nothing goes to third party servers.
+- connects to the target IP only, the name goes in SNI and Host, redirects are
+  never followed,
+- no out-of-band test (interactsh), so nuclei sends nothing to third parties.
 
-It is still an attack from the point of view of the target. Each name gets
-about 5000 requests in 5 minutes, and many carry real exploit payloads: path
-traversal, SQL injection, XSS, a few PUT and DELETE on known APIs. Expect the
-web server logs, a WAF or an IDS to report them. Without the whitelist the
-scanning VPS gets banned halfway.
+It is still an attack for the target: about 5000 requests in 5 minutes per
+name, many with real payloads (path traversal, SQL injection, XSS, a few PUT
+and DELETE). Logs, WAF and IDS will report it. Without the whitelist the VPS
+gets banned halfway.
 
-The templates are downloaded from GitHub again at the start of each scan, so
-a new finding can come from a new template, not from a change on the site.
-
-The config file never goes to git.
+Templates are downloaded from GitHub at each scan, so a new finding can come
+from a new template, not from a change on the site.
 
 ### Find the names on a NethServer 8 cluster
 
-Each Traefik instance holds its own routes. Run this on the leader node for
-every Traefik instance of the cluster (`traefik1`, `traefik2`, ...):
+On the leader node, for each Traefik instance (`traefik1`, `traefik2`...):
 
 ```
 api-cli run module/traefik1/list-routes --data '{"expand_list": true}' | jq -r '.[] | select(.host) | .host' | sort -u
 ```
 
-Routes without a host, like `cluster-admin`, are routed by path and only
-answer with the default certificate, so they are not listed. The mail server
-name is not a route. Look for it in the MX record or in the certificates:
+Routes without a host, like `cluster-admin`, only answer with the default
+certificate and are not listed. The mail server name is not a route. Find it
+in the MX record or in the certificates:
 
 ```
 api-cli run module/traefik1/list-certificates --data '{"expand_list": true}'
@@ -151,50 +144,47 @@ api-cli run module/traefik1/list-certificates --data '{"expand_list": true}'
 
 ## Run
 
-All commands below run as root. Root only asks systemd to start the service:
-the scan itself runs as the `external-scan` user. Started directly as root,
-the script refuses to run.
-
-Run a scan by hand:
+Commands run as root, which only asks systemd to start the service. The scan
+itself runs as `external-scan`. Started directly as root, it refuses to run.
 
 ```
 systemctl start external-scan.service
 ```
 
-The command returns when the scan is over. A scan can take from a few minutes
-to an hour or more per address. A second start while a scan runs stops with
-"another scan is already running". To get the prompt back at once and follow
-the scan:
+This returns when the scan ends: a few minutes to over an hour per address.
+A second start while a scan runs does nothing: systemd joins the running one.
+Started directly, the script stops with "another scan is already running".
+
+To get the prompt back and follow it:
 
 ```
 systemctl start --no-block external-scan.service
 journalctl -u external-scan -f
 ```
 
-The journal only shows the start and the end. The details go to
-`results/<date>_<time>/scan.log`. `results/latest` points to the last finished run. Then read the summary:
+The journal only shows the start and the end. Details go to
+`results/<date>_<time>/scan.log`, and `results/latest` points to the last
+finished run:
 
 ```
 cat /var/lib/external-scan/results/latest/SUMMARY.txt
 ```
 
-A change in `external-scan.conf` needs no restart or reinstall. The next
-scan reads it.
+A config change needs no restart. The next scan reads it.
 
-To scan every month on the 1st, at a random time between 03:00 and 04:00, run
-this once after a first good manual scan:
+After a first good manual scan, enable the monthly run (the 1st, at a random
+time between 03:00 and 04:00):
 
 ```
 systemctl enable --now external-scan.timer
 ```
 
-The script runs as the `external-scan` user, never as root. systemd gives it
-the raw socket right that the nmap SYN scan needs. Run outside systemd, it
-falls back to a slower TCP connect scan.
+systemd gives the raw socket right for the nmap SYN scan. Run outside
+systemd, the scan falls back to a slower TCP connect scan and skips UDP.
 
 ## Read the results
 
-Every scan gets its own directory, named after the day and the time it started:
+One directory per scan, named after its start time:
 
 ```
 results/2026-11-01_0312/
@@ -206,50 +196,46 @@ results/2026-11-01_0312/
     REPORT_firewall.example.com_2026-11-01_0312.pdf
                                   the report for the owner, when pdf_report is on
     report.json                   the data of the PDF, when pdf_report is on
-    nmap.txt  nmap.xml            full nmap output of the TCP ports
-    nmap-udp.txt  nmap-udp.xml    nmap output of the UDP ports, when UDP ran
+    nmap.txt  nmap.xml            nmap output, TCP
+    nmap-udp.txt  nmap-udp.xml    nmap output, UDP, when it ran
     ports.tsv                     open TCP and UDP ports, compared next month
-    ndiff.txt                     TCP nmap diff with the previous scan, when ndiff is installed
-    testssl/                      full testssl.sh output per name and port
-    ssh-audit_22.json             full ssh-audit output
-    nuclei/                       full nuclei output per name and port, when web_scan is on
+    ndiff.txt                     TCP diff with the previous scan, when ndiff is installed
+    testssl/                      testssl.sh output per name and port
+    ssh-audit_22.json             ssh-audit output
+    nuclei/                       nuclei output per name and port, when web_scan is on
     findings.tsv                  every finding with its key, compared next month
 ```
 
-A second scan started in the same minute replaces the first one.
+A second scan in the same minute replaces the first.
 
-Each report has a status:
+Status of a report:
 
-- **OK**: nothing needs a look.
-- **ATTENTION**: read "What changed" and "Needs attention". It can be a new
-  open port, a finding that is not accepted in the config, or a tool that
-  failed (a `failed/...` finding). A port that went away and the CVEs by
-  version never change the status.
-- **ERROR**: nmap did not finish the TCP scan, so nothing else was tested.
-  The script then exits with an error and keeps the old results.
+- **OK**: nothing to look at.
+- **ATTENTION**: read "What changed" and "Needs attention". A new open port,
+  a finding not accepted, or a failed tool (`failed/...`). A closed port and
+  the CVEs by version never change the status.
+- **ERROR**: the nmap TCP scan did not finish, nothing else was tested. The
+  script exits with an error and keeps the old results.
 
-A finding is a problem the scan found: a serious TLS or SSH weakness, a
-certificate that expires soon, SSH that accepts passwords, a sensitive port
-open to the Internet (see `sensitive_ports`), a nuclei match, or a name that
-resolves to another address. Each finding has a stable key, like `tls/www.example.com/443/BREACH`.
+A finding is a problem found: a serious TLS or SSH weakness, a certificate
+expiring soon, SSH accepting passwords, an open sensitive port
+(`sensitive_ports`), a nuclei match, or a name resolving to another address.
+Each has a stable key, like `tls/www.example.com/443/BREACH`.
 
-The report starts with what matters:
+The report starts with:
 
-- **What changed**: ports that appeared or disappeared, and findings that are
-  new or fixed since the previous scan.
-- **Needs attention**: findings that are not accepted.
-- **Accepted risks**: one line per `accept` line that covers at least one
-  finding, with the number of findings and the reason.
+- **What changed**: ports and findings that appeared or went away.
+- **Needs attention**: findings not accepted.
+- **Accepted risks**: each `accept` line that matched, with the count and the reason.
 - **Suggested accept lines**: ready to copy into the config.
 
-Then come the open ports, the certificates, the CVEs by version and the notes.
+Then the open ports, the certificates, the CVEs by version and the notes.
 
 ### Accept known risks
 
-The first scan usually lists many findings, often the same one on several
-ports. Look at each one. Fix what can be fixed. For a risk you keep on
-purpose, copy its suggested line under the target in the config, set a review
-date and write the real reason:
+The first scan often lists the same finding on several ports. Fix what you
+can. For a risk kept on purpose, copy its suggested line under the target,
+with a review date and the real reason:
 
 ```
 target 203.0.113.10 firewall.example.com
@@ -257,60 +243,53 @@ target 203.0.113.10 firewall.example.com
   accept tls/*/*/BREACH until 2027-06-30 "HTTP compression needed, no secret in the pages"
 ```
 
-From then on the status only turns to ATTENTION for something new or not yet
-accepted. An accepted finding comes back after its date. An accept line that
-matches nothing is listed in the notes, so the config stays clean. This note
-is skipped when a tool failed, since the finding may only be missing for that
-reason.
+The status then only turns to ATTENTION for something new or not accepted. An
+accepted finding comes back after its date. An accept line that matches
+nothing is noted, unless a tool failed, since the finding may only be missing
+because of that.
 
-The first scan of an address is the baseline. It does not report new ports.
-Each scan is compared with the last earlier run where nmap finished for that
-address. UDP ports are compared only when both runs scanned UDP.
+The first scan of an address is the baseline, with no new ports. Each scan
+is compared with the last earlier run where nmap finished. UDP is compared
+only when both runs scanned it.
 
-Results older than `keep_months` are deleted after each scan that ends
-without ERROR.
+Results older than `keep_months` are deleted after each scan without ERROR.
 
 ### PDF report for the owner
 
-Set `pdf_report on` in the config to also get a `REPORT_<name>_<date>_<time>.pdf` in English per
-address, to send to its owner. `<name>` is the first word of the target
-label, or the IP without a label. The report says who ran the scan, from which
-machine, when it started and ended, and what was tested. Then it gives what
-changed, the findings to fix, the accepted risks, the open ports with how nmap
-identified each service, the TLS services with the tests testssl could not
-run, SSH, the web sites, and the notes.
+`pdf_report on` adds `REPORT_<name>_<date>_<time>.pdf` per address, in
+English. `<name>` is the first word of the target label, or the IP. It says
+who scanned, from which machine, when, and what was tested. Then what
+changed, the findings, the accepted risks, the open ports with how nmap
+identified them, the TLS services with the tests testssl could not run, SSH,
+the web sites and the notes.
 
-A technical annex gives the rest of the data: the nmap command and the tool
-versions, every known attack testssl tested with its result, its LOW and
-MEDIUM results except the ones per cipher suite, each certificate, the SSH
-algorithms with the host key fingerprint and the notes of ssh-audit, what
-nuclei ran, the CVEs by version on TCP ports like the text report, and the
-SHA-256 of every file of the target folder, except `report.json` and
-the PDF. A section with nothing in it says "None.", so an empty result
-never looks like a check that did not run. The annex also says what is not in
-the PDF: the testssl results rated INFO or OK apart from the attacks tested,
-and its results per cipher suite. They stay in the raw files, which are kept
-on the scanning machine for `keep_months` months.
+The annex holds the rest: the nmap command, the tool versions, every TLS
+attack tested and its result, testssl LOW and MEDIUM results except per cipher
+suite, each certificate, the SSH algorithms, host key fingerprint and
+ssh-audit notes, what nuclei ran, the CVEs by version on TCP ports, and the
+SHA-256 of every file of the target folder except `report.json` and the PDF.
+An empty section says "None.", so it never looks like a check that did not
+run. The annex also says what is left out: testssl INFO and OK results apart
+from the attacks, and results per cipher suite. They stay in the raw files,
+kept `keep_months` months on the scanning machine.
 
-The PDF adds no advice and no judgment of its own, and cuts no text. Messages
-come from the tools, and from the script for its own checks (DNS, sensitive ports, SSH
-login, certificate expiry, failed checks). The severity shown is the one
-testssl and nuclei give. An expired acceptance is said next to the message.
-In each section, findings with the same check and the exact same message
-share one line, with the places where they were seen. The check is the test
-name for testssl and nuclei, the port and algorithm type for ssh-audit, and
-the finding key for the others. A check that did not complete is a finding of
-the "Test not completed" category, and the TLS, SSH and web tables mark its
-row.
+The PDF adds no advice and no judgment, and cuts no text. Messages come from
+the tools, and from the script for its own checks (DNS, sensitive ports, SSH
+login, certificate expiry, failed checks). Severities are those of testssl and
+nuclei. An expired acceptance is said next to its message. Findings with the
+same check and the same message share one line with all their places. The
+check is the test name for testssl and nuclei, the port and algorithm type for
+ssh-audit, and the finding key for the others. A check that did not complete
+is a "Test not completed" finding, and its row is marked in the TLS, SSH and
+web tables.
 
-Add `operator` once and `authorization` under each target to print who scans
-and under which permission. Without them the PDF says they are not set.
+`operator` and `authorization` print who scans and under which permission.
+Without them the PDF says they are not set.
 
-The PDF is rendered by [typst](https://typst.app), a single binary that
-`install.sh` fetches into `tools/`, with its own fonts. The template is
-`report.typ`. A PDF that fails is noted in `SUMMARY.txt` and `scan.log`, it
-never changes the status. When only typst fails, `report.json` stays, so the
-PDF can be rendered again by hand:
+typst, fetched into `tools/` with its own fonts, renders the template
+`report.typ`. A failed PDF is noted in `SUMMARY.txt` and `scan.log` and never
+changes the status. When only typst failed, `report.json` stays, so you can
+render it again:
 
 ```
 tools/typst/typst compile --root / --ignore-system-fonts \
@@ -320,7 +299,7 @@ tools/typst/typst compile --root / --ignore-system-fonts \
 
 ## Test on the VPS itself
 
-Scan only the VPS loopback when testing:
+Scan only the loopback:
 
 ```
 mkdir -p /tmp/es-test
@@ -332,21 +311,20 @@ sudo -u external-scan /var/lib/external-scan/external-scan \
 
 ## Good to know
 
-- Many VPS providers block outgoing port 25. The SMTP test on port 25 then
-  fails, while 465 and 587 still work.
-- Each tool has a time limit: nmap 6 hours for TCP and 4 hours for UDP per
-  address, testssl.sh 30 minutes per port, nuclei 30 minutes per name,
-  ssh-audit 5 minutes. systemd stops the whole run after 24 hours. A tool
-  that hits its limit gives a `failed/...` finding, nmap TCP gives ERROR.
-- nuclei stops scanning a site that stops answering. The report then shows a
-  `failed/web/...` line. It is usually a ban: check the whitelist of the
-  scanning VPS.
-- The nmap vulners script sends the software versions it finds to
-  vulners.com. Its matches use the version string only, so backported distro
-  fixes show up as false positives. They do not change the status.
-- All TCP ports are scanned, but only a short list of UDP ports (DNS, NTP,
-  SNMP, VPN, QUIC, telephony...), set by `udp_ports` and `udp_ports_extra`. A full UDP scan would take
-  about 18 hours. The UDP scan needs the raw socket right, so it only runs
+- Many VPS providers block outgoing port 25. The SMTP test on 25 then fails,
+  465 and 587 still work.
+- Time limits: nmap 6 hours TCP and 4 hours UDP per address, testssl.sh 30
+  minutes per port, nuclei 30 minutes per name, ssh-audit 5 minutes, the whole
+  run 24 hours. A tool over its limit gives a `failed/...` finding, nmap TCP
+  gives ERROR.
+- nuclei stops on a site that stops answering, with a `failed/web/...` line.
+  It is usually a ban: check the whitelist.
+- The vulners script sends the versions it finds to vulners.com. It matches
+  on the version string only, so distro backports show as false positives.
+  They never change the status.
+- All TCP ports are scanned, UDP only a short list (DNS, NTP, SNMP, VPN, QUIC,
+  telephony...) set by `udp_ports` and `udp_ports_extra`. A full UDP scan
+  would take about 18 hours. UDP needs the raw socket right, so it only runs
   through systemd. Run by hand, the report says it was skipped.
 
 ## Uninstall

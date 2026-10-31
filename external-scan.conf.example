@@ -1,199 +1,145 @@
-# external-scan configuration file
+# external-scan configuration
 #
-# Copy this file to external-scan.conf in the same directory and edit it.
-# external-scan.conf is ignored by git: it holds your real targets.
+# Copy this file to external-scan.conf, which git ignores.
 #
 # LEGAL: only list IP addresses you have WRITTEN permission to scan.
-# Ask the owner to whitelist the IP of the scanning machine in CrowdSec,
-# their IDS, fail2ban or similar, or the scan gets blocked halfway.
+# Ask the owner to whitelist this machine in CrowdSec, the IDS, fail2ban...
+# or the scan gets blocked halfway.
 #
-# Syntax rules
-# - One setting per line. Fields are separated by spaces.
-# - "#" starts a comment, until the end of the line.
-# - Empty lines are ignored.
-# - Any line the script does not understand stops the scan with an error
-#   that gives the line number. Nothing is guessed.
+# One setting per line. "#" starts a comment. A wrong line stops the scan.
+
+# ===========================================================================
+# EXAMPLE (remove the "# " to use it)
+# ===========================================================================
 #
-# ---------------------------------------------------------------------------
-# GLOBAL SETTINGS (optional, at the start of a line, no indentation)
-# ---------------------------------------------------------------------------
+# Every target gets, with or without names:
+#   - nmap on all TCP ports and the UDP list, with versions and known CVEs,
+#   - testssl.sh on TLS, SMTP, IMAP and POP3 ports,
+#   - ssh-audit and a password login check on SSH ports,
+#   - a finding for each open sensitive port.
+# Other ports, like plain HTTP on 80, are only listed.
 #
-# cert_warn_days <days>
-#   The report flags a certificate that expires in fewer days than this.
-#   Default: 30
-cert_warn_days 30
+# A name adds the real certificate behind a reverse proxy, a DNS check,
+# and nuclei when web_scan is on.
 #
-# keep_months <months>
-#   Result folders older than this are deleted after each successful scan.
-#   Default: 12
-keep_months 12
-#
-# udp_ports <port,port,...> | none
-#   UDP ports to scan on every target. All TCP ports (1 to 65535) are always
-#   scanned. UDP is limited to a list because a full UDP scan takes about
-#   18 hours. "none" disables UDP. UDP only runs when the scan is started by
-#   systemd, because it needs the CAP_NET_RAW capability.
-#   Default: 7,17,19,53,67,69,88,111,123,137,138,161,162,389,427,443,464,
-#   500,514,520,623,853,1194,1434,1701,1719,1812,1813,1900,2049,2427,3283,
-#   3389,3478,3702,4500,4569,5060,5160,5349,5351,5353,5683,10001,11211,37810,
-#   47808,51820,55820
-#   NethServer 8: cluster VPN WireGuard (55820), Samba AD Kerberos (88, 464)
-#   and NetBIOS (137, 138), DHCP (67). Telephony: SIP (5060, 5160), IAX2
-#   (4569), H.323 (1719), MGCP (2427), STUN/TURN (3478, 5349). VPN: IPsec
-#   (500, 4500), OpenVPN (1194), L2TP (1701), WireGuard (51820). Others: DNS,
-#   DNS over QUIC, TFTP, rpcbind, NTP, SNMP and its traps, CLDAP, QUIC, IPMI,
-#   MS-SQL browser, RADIUS, syslog, RIP, NFS, SSDP, RDP, mDNS, NAT-PMP,
-#   Ubiquiti discovery, memcached. Amplification classics: echo, qotd,
-#   chargen, SLP, Apple Remote Desktop, WS-Discovery, CoAP, DVR (37810),
-#   BACnet. Many of them can be abused for traffic amplification when they
-#   answer from the Internet.
-# udp_ports 53,123,161,500,4500,51820
-#
-# udp_ports_extra <port,port,...>
-#   UDP ports added to udp_ports, for a service of this site only. Several
-#   lines add up. With "udp_ports none", only these ports are scanned.
-# udp_ports_extra 9987,27015
-#
-# sensitive_ports <port,port,...> | none
-#   TCP ports that are risky when open to the Internet: remote access, admin
-#   web interfaces, databases, file sharing. Each one found open is a finding
-#   ("sensitive/<port>"), every month, until it is closed or accepted.
-#   Default: 21,23,135,139,445,902,1433,2082,2083,2086,2087,2222,2375,2376,
-#   2379,2380,3306,3389,4848,5000,5001,5432,5601,5900,5901,5985,5986,6379,
-#   6443,7001,8006,8007,8161,8291,8443,8728,8729,8834,8880,9000,9090,9200,
-#   9443,9990,10000,10250,11211,15672,19999,20000,27017
-#   Web admin panels: cPanel and WHM (2082, 2083, 2086, 2087), DirectAdmin
-#   (2222), Plesk (8443, 8880), Proxmox VE and Backup Server (8006, 8007),
-#   Cockpit (9090), Portainer (9000, 9443), Webmin and Usermin (10000, 20000),
-#   Synology DSM (5000, 5001), Netdata (19999), Kibana (5601), Nessus (8834),
-#   RabbitMQ (15672), ActiveMQ (8161), Java servers (4848, 7001, 9990).
-#   Remote management: VMware ESXi (902), WinRM (5985, 5986), MikroTik
-#   (8291, 8728, 8729), Kubernetes and etcd (2379, 2380, 6443, 10250).
-# sensitive_ports 22,3389,9090
-#
-# web_scan on | off
-#   Runs nuclei, a web vulnerability scanner, on every "https" line of every
-#   target. It finds outdated applications behind a reverse proxy, exposed
-#   admin pages and files like .git or .env. Only "critical" and "high"
-#   templates run, without the dos, intrusive and fuzz ones, at 20 requests
-#   per second at most. The templates are downloaded again at each scan.
-#   This is a vulnerability scan, not a port scan: turn it on only when the
-#   written permission covers it. A target can override it with its own
-#   "web_scan" line.
-#   Default: off
-# web_scan on
-#
-# pdf_report on | off
-#   Also writes REPORT_<name>_<date>_<time>.pdf for each target, in English, to send to
-#   the owner of the address. It says who scanned, when, what and how, with
-#   the findings and the SHA-256 of every raw result. A PDF that fails is
-#   noted in SUMMARY.txt and scan.log, it never changes the status.
-#   Default: off
 # pdf_report on
-#
-# operator <text>
-#   Who runs the scan, printed in the PDF report. Optional.
 # operator "Jane Doe, Example IT"
 #
-# ---------------------------------------------------------------------------
-# TARGETS (one block per public IP address)
-# ---------------------------------------------------------------------------
+# # Firewall, web and mail by NAT. Vulnerability scan allowed.
+# target 203.0.113.10 firewall.example.com
+#   authorization "order 2026-042, signed by J. Smith"
+#   web_scan on
+#   https www.example.com   443
+#   https cloud.example.com 443
+#   smtp  mail.example.com  25
+#   smtp  mail.example.com  587
+#   tls   mail.example.com  465
+#   imap  mail.example.com  143
+#   tls   mail.example.com  993
+#   accept sensitive/9090 until 2027-06-30 "firewall GUI, VPN planned"
+#
+# # Router, no name. Tested on the IP alone.
+# target 198.51.100.20 office router
+#   authorization "order 2026-042, signed by J. Smith"
+#
+# # Server, only the site named. Its other open ports are tested on the IP.
+# target 192.0.2.30 cloud server
+#   authorization "order 2026-042, signed by J. Smith"
+#   https shop.example.com 443
+#
+# # LDAP and mail, no vulnerability scan. "tls" fits any TLS protocol.
+# target 192.0.2.40 ldap and mail server
+#   authorization "email from J. Smith, no vulnerability scan"
+#   tls   ldap.example.com    636
+#   https webmail.example.com 443
+#   smtp  mx.example.com      25
+#   accept tls/*/*/BREACH until 2027-06-30 "compression needed on the webmail"
+
+# ===========================================================================
+# GLOBAL SETTINGS (optional, not indented)
+# ===========================================================================
+#
+# cert_warn_days <days>     Flag a certificate that expires sooner. Default 30.
+cert_warn_days 30
+# keep_months <months>      Delete older results after a scan without ERROR.
+#                           Default 12.
+keep_months 12
+# pdf_report on|off         Also write a PDF report per target, for the owner.
+#                           Default off.
+# operator <text>           Who scans, printed in the PDF.
+# web_scan on|off           Run nuclei on every "https" line: critical and high
+#                           templates, 20 requests per second. It is a
+#                           vulnerability scan, so only with written
+#                           permission. A target can override it. Default off.
+# udp_ports <list>|none     REPLACE the UDP port list. All TCP ports are always
+#                           scanned. UDP needs systemd for the raw socket.
+# udp_ports_extra <list>    ADD ports to the UDP list. Lines add up.
+# sensitive_ports <list>|none
+#                           REPLACE the list of TCP ports risky to expose. Each
+#                           open one is a finding until closed or accepted.
+#
+# Lists are comma separated. The default lists are at the end of this file.
+
+# ===========================================================================
+# TARGETS (one block per IP)
+# ===========================================================================
 #
 # target <ip> <label>
-#   <ip>     ONE IPv4 address. IPv6, ranges (10.0.0.0/24, 10.0.0.1-20) and
-#            host names are refused. This is the ONLY address the scan ever
-#            connects to for this block: nmap, ssh-audit and testssl.sh all
-#            use it.
-#   <label>  Free text, spaces allowed. Used only in the report and in the
-#            name of the result folder. Never used to connect.
+#   <ip> is one IPv4 address. Ranges, names and IPv6 are refused, and the
+#   scan never connects anywhere else. <label> is free text, its first word
+#   names the PDF.
 #
-#   With a "target" line alone, the scan does all of this on <ip>:
-#   - nmap: every TCP port, the udp_ports list, service and version detection,
-#     known CVEs by version (vulners).
-#   - testssl.sh on every open port that nmap sees as SSL/TLS (for example
-#     443, 465, 993, 995), directly on the IP, without a name.
-#   - testssl.sh with STARTTLS on every open SMTP, IMAP or POP3 port (for
-#     example 25, 587, 143, 110), directly on the IP, without a name.
-#   - ssh-audit on every open port where nmap sees SSH.
+# Indented lines, all optional:
 #
-#   <mode> <fqdn> <port>      (indented line, under a "target" line)
-#   Optional. Tests one name with testssl.sh on the IP of the block above.
-#   Use it for every site behind a reverse proxy (Traefik, nginx, HAProxy...):
-#   the proxy picks the certificate from the name, so without these lines
-#   you only see its default certificate.
-#   <mode>   How testssl.sh talks to the port:
-#              https  HTTPS, TLS from the first byte (web sites)
-#              smtps  SMTP with TLS from the first byte (465)
-#              imaps  IMAP with TLS from the first byte (993)
-#              pop3s  POP3 with TLS from the first byte (995)
-#              tls    TLS from the first byte, any other protocol
-#              smtp   plain SMTP, then STARTTLS (25, 587)
-#              imap   plain IMAP, then STARTTLS (143)
-#              pop3   plain POP3, then STARTTLS (110)
-#   <fqdn>   The name to present (SNI). It does NOT choose where to connect:
-#            the connection always goes to <ip>. If the name resolves to
-#            another address in DNS, the report says so.
-#   <port>   Required. A TCP port. If nmap does not see it open, the line is
-#            skipped and the report says so.
-#   A port tested by name is not tested a second time without a name.
-#   An "https" line is also scanned with nuclei when web_scan is on.
+#   <mode> <fqdn> <port>    Test this name on this port. The name is sent in
+#                           SNI, the connection always goes to <ip>. Skipped
+#                           with a note if the port is closed.
+#     https                 web site, plus nuclei if web_scan is on
+#     tls                   TLS from the first byte, any protocol: 465, 993,
+#                           995, 636... smtps, imaps and pop3s are aliases.
+#     smtp | imap | pop3    STARTTLS: 25 and 587, 143, 110
 #
-#   web_scan on | off      (indented, optional)
-#   Turns the nuclei web scan on or off for this target only, whatever the
-#   global web_scan says.
+#   web_scan on|off         Override the global setting.
+#   authorization <text>    The written permission, printed in the PDF.
+#   accept <key> until <YYYY-MM-DD> <reason>
+#                           Accept a known risk until that date. The report
+#                           ends with ready to copy lines. "*" matches anything.
 #
-#   authorization <text>   (indented, optional)
-#   The written permission for this address, printed in the PDF report.
-#   Without it the PDF says it is not set in the configuration.
+# Keys:
+#   tls/<name|ip>/<port>/<testssl id>   TLS finding
+#   cert/<name|ip>/<port>               certificate expires soon
+#   ssh/<port>/<kex|key|enc|mac>/<alg>  weak SSH algorithm
+#   ssh/<port>/cve/<CVE id>             SSH CVE
+#   sshpw/<port>                        SSH accepts passwords
+#   sensitive/<port>                    sensitive port open
+#   dns/<name>                          name does not resolve to the IP
+#   web/<name>/<port>/<template id>     nuclei finding
+#   failed/tls/<name|ip>/<port>         testssl.sh failed
+#   failed/ssh/<port>                   ssh-audit failed
+#   failed/sshpw/<port>                 SSH login check failed
+#   failed/web/<name>/<port>            nuclei failed
+#   failed/udp                          UDP scan failed
+
+# ===========================================================================
+# DEFAULT PORT LISTS
+# ===========================================================================
 #
-#   accept <key pattern> until <YYYY-MM-DD> <reason>   (indented, optional)
-#   Accepts a known risk on the IP of the block above, so it stops raising
-#   the status every month. The report still lists it under "Accepted risks"
-#   with the reason, and it comes back in "Needs attention" after the date.
-#   An accept line that matches nothing is noted in the report, so it can be
-#   removed.
-#   <key pattern>  The key of a finding, as printed in the report. Each
-#                  report ends with ready-to-copy accept lines. "*" matches
-#                  anything, so one line can cover the same finding on many
-#                  ports. Keys look like this:
-#                    tls/<name or ip>/<port>/<testssl id>   TLS finding
-#                    cert/<name or ip>/<port>               certificate expiry
-#                    ssh/<port>/<kex|key|enc|mac>/<alg>     weak SSH algorithm
-#                    ssh/<port>/cve/<CVE id>                SSH CVE
-#                    sshpw/<port>                           SSH accepts passwords
-#                    sensitive/<port>                       sensitive port open
-#                    dns/<name>                             name not on this IP
-#                    web/<name>/<port>/<template id>        nuclei finding
-#                    failed/tls/<name or ip>/<port>         testssl failed
-#                    failed/ssh/<port>                      ssh-audit failed
-#                    failed/sshpw/<port>                    SSH login check failed
-#                    failed/web/<name>/<port>               nuclei failed
-#                    failed/udp                             UDP scan failed
-#   <YYYY-MM-DD>   Required. Review the risk again at that date, at most a
-#                  year ahead is a good habit.
-#   <reason>       Free text: why the risk is accepted, or what mitigates it.
+# udp_ports:
+#   7,17,19,53,67,69,88,111,123,137,138,161,162,389,427,443,464,500,514,520,
+#   623,853,1194,1434,1701,1719,1812,1813,1900,2049,2427,3283,3389,3478,3702,
+#   4500,4569,5060,5160,5349,5351,5353,5683,10001,11211,37810,47808,51820,
+#   55820
+#   NethServer 8 (WireGuard 55820, Samba AD, DHCP), telephony (SIP, IAX2,
+#   H.323, MGCP, STUN/TURN), VPN (IPsec, OpenVPN, L2TP, WireGuard), common
+#   services (DNS, NTP, SNMP, LDAP, RADIUS, syslog, NFS, mDNS...) and ports
+#   known for traffic amplification (echo, chargen, SSDP, memcached...).
 #
-# ---------------------------------------------------------------------------
-# EXAMPLES (documentation addresses, remove the leading "# " to use)
-# ---------------------------------------------------------------------------
-#
-# A firewall that forwards web and mail to a server behind it:
-#
-# target 203.0.113.10 firewall.example.com
-#   authorization "purchase order 2026-042, signed by J. Smith on 2026-09-15"
-#   web_scan on                   # the permission covers a vulnerability scan
-#   https www.example.com   443   # web site behind the reverse proxy
-#   https cloud.example.com 443   # second site on the same proxy
-#   smtp  mail.example.com  25    # incoming mail, STARTTLS
-#   smtp  mail.example.com  587   # mail submission, STARTTLS
-#   smtps mail.example.com  465   # mail submission, TLS from the start
-#   imap  mail.example.com  143   # IMAP, STARTTLS
-#   imaps mail.example.com  993   # IMAP, TLS from the start
-#   pop3  mail.example.com  110   # POP3, STARTTLS
-#   pop3s mail.example.com  995   # POP3, TLS from the start
-#   accept sensitive/9090 until 2027-06-30 "firewall GUI, CrowdSec bans brute force, VPN planned"
-#   accept tls/*/*/BREACH until 2027-06-30 "HTTP compression needed, no secret in responses"
-#
-# A second address with no name to test: the defaults are enough.
-#
-# target 198.51.100.20 home office
+# sensitive_ports:
+#   21,23,135,139,445,902,1433,2082,2083,2086,2087,2222,2375,2376,2379,2380,
+#   3306,3389,4848,5000,5001,5432,5601,5900,5901,5985,5986,6379,6443,7001,
+#   8006,8007,8161,8291,8443,8728,8729,8834,8880,9000,9090,9200,9443,9990,
+#   10000,10250,11211,15672,19999,20000,27017
+#   Admin pages (cPanel, Plesk, Proxmox, Cockpit, Webmin, Portainer,
+#   Synology...), remote access (Telnet, RDP, VNC, WinRM, MikroTik, ESXi),
+#   file sharing (FTP, SMB), databases (MySQL, PostgreSQL, MS-SQL, Redis,
+#   MongoDB, Elasticsearch), Docker and Kubernetes APIs.
